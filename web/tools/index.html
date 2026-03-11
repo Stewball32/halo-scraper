@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Halo Scraper — Tools</title>
+    <link rel="stylesheet" href="/ui/style.css" />
+    <style>
+      /* ── Layout ─────────────────────────────────────────────────────────────────── */
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+        padding: 0;
+      }
+
+      #hdr {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 8px 14px;
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+        font-size: 11px;
+      }
+
+      #hdr .title {
+        font-weight: bold;
+        letter-spacing: 0.08em;
+        color: var(--text);
+        text-transform: uppercase;
+      }
+
+      nav a {
+        color: var(--dim);
+        text-decoration: none;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 11px;
+      }
+
+      nav a:hover {
+        color: var(--text);
+        background: var(--card2);
+      }
+
+      nav a.active {
+        color: var(--text);
+        background: var(--card2);
+      }
+
+      #content {
+        flex: 1 1 auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        overflow-y: auto;
+      }
+
+      /* ── Section headers ─────────────────────────────────────────────────────────── */
+      .section-hdr {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--dim);
+        margin-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 5px;
+      }
+
+      /* ── Host cards ──────────────────────────────────────────────────────────────── */
+      #host-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .host-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 12px 14px;
+        min-width: 220px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .host-card .card-name {
+        font-size: 12px;
+        font-weight: bold;
+        color: var(--text);
+      }
+
+      .host-card .card-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+      }
+
+      .host-card .card-error {
+        font-size: 10px;
+        color: var(--red);
+        min-height: 14px;
+        word-break: break-word;
+      }
+
+      .host-card .card-since {
+        font-size: 10px;
+        color: var(--dim);
+      }
+
+      .host-card .btn-reconnect {
+        margin-top: 4px;
+        padding: 4px 10px;
+        background: var(--card2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 11px;
+        border-radius: 3px;
+        cursor: pointer;
+        align-self: flex-start;
+      }
+
+      .host-card .btn-reconnect:hover:not(:disabled) {
+        background: var(--border);
+      }
+
+      .host-card .btn-reconnect:disabled {
+        color: var(--dim);
+        cursor: default;
+      }
+
+      /* ── Status badges ───────────────────────────────────────────────────────────── */
+      .badge {
+        font-size: 9px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 2px 6px;
+        border-radius: 2px;
+      }
+
+      .badge-online     { background: #1a3320; color: var(--green); }
+      .badge-connecting { background: #2a2510; color: var(--yellow); }
+      .badge-offline    { background: #2a1010; color: var(--red); }
+
+      /* ── Server info ─────────────────────────────────────────────────────────────── */
+      #server-info {
+        display: flex;
+        gap: 24px;
+        font-size: 11px;
+        color: var(--dim);
+      }
+
+      #server-info span {
+        color: var(--text);
+      }
+
+      /* ── Log panel ───────────────────────────────────────────────────────────────── */
+      #log-panel {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      #log-list {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: 11px;
+        line-height: 1.6;
+        max-height: 400px;
+        display: flex;
+        flex-direction: column-reverse;
+      }
+
+      #log-list .log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      #log-list .log-line.err   { color: var(--red); }
+      #log-list .log-line.ok    { color: var(--green); }
+      #log-list .log-line.dim   { color: var(--dim); }
+    </style>
+  </head>
+  <body>
+    <div id="hdr">
+      <span class="title">Halo Scraper</span>
+      <nav>
+        <a href="/ui/debug/">Debug</a>
+        <a href="/ui/tools/" class="active">Tools</a>
+      </nav>
+    </div>
+
+    <div id="content">
+      <!-- Hosts -->
+      <div id="hosts-section">
+        <div class="section-hdr">Host Status</div>
+        <div id="host-grid"></div>
+      </div>
+
+      <!-- Server info -->
+      <div id="server-section">
+        <div class="section-hdr">Server</div>
+        <div id="server-info">
+          Uptime: <span id="srv-uptime">—</span>
+          &nbsp;·&nbsp;
+          WS clients: <span id="srv-clients">—</span>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div id="log-panel">
+        <div class="section-hdr">Scraper Log</div>
+        <div id="log-list"></div>
+      </div>
+    </div>
+
+    <script>
+      "use strict";
+
+      const _origin =
+        location.protocol === "file:"
+          ? "http://localhost:9000"
+          : location.origin;
+      const STATUS_URL   = _origin + "/api/status";
+      const LOGS_URL     = _origin + "/api/logs";
+      const RECONNECT_URL = (name) => _origin + "/api/hosts/" + encodeURIComponent(name) + "/reconnect";
+
+      // ── Utilities ──────────────────────────────────────────────────────────────────
+      function fmtDuration(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        if (h > 0) return h + "h " + m + "m";
+        if (m > 0) return m + "m " + s + "s";
+        return s + "s";
+      }
+
+      function sinceStr(isoStr) {
+        const secs = Math.round((Date.now() - new Date(isoStr).getTime()) / 1000);
+        return fmtDuration(secs);
+      }
+
+      // ── Status rendering ───────────────────────────────────────────────────────────
+      let lastStatus = null;
+
+      async function fetchStatus() {
+        try {
+          const r = await fetch(STATUS_URL);
+          if (!r.ok) return;
+          lastStatus = await r.json();
+          renderStatus(lastStatus);
+        } catch (_) {}
+      }
+
+      function renderStatus(data) {
+        document.getElementById("srv-uptime").textContent  = fmtDuration(data.uptime_s || 0);
+        document.getElementById("srv-clients").textContent = data.ws_clients ?? "—";
+
+        const grid = document.getElementById("host-grid");
+        const names = Object.keys(data.hosts || {}).sort();
+
+        // Re-use existing cards or create new ones.
+        const existing = {};
+        for (const card of grid.children) existing[card.dataset.host] = card;
+
+        for (const name of names) {
+          const h = data.hosts[name];
+          let card = existing[name];
+          if (!card) {
+            card = buildCard(name);
+            grid.appendChild(card);
+          }
+          updateCard(card, name, h);
+          delete existing[name];
+        }
+        // Remove cards for hosts no longer in status.
+        for (const card of Object.values(existing)) grid.removeChild(card);
+      }
+
+      function buildCard(name) {
+        const card = document.createElement("div");
+        card.className = "host-card";
+        card.dataset.host = name;
+        card.innerHTML = `
+          <div class="card-name">${escHtml(name)}</div>
+          <div class="card-row">
+            <span class="badge" data-badge></span>
+          </div>
+          <div class="card-error" data-error></div>
+          <div class="card-since" data-since></div>
+          <button class="btn-reconnect" data-btn>Reconnect</button>`;
+        card.querySelector("[data-btn]").addEventListener("click", () => reconnect(name));
+        return card;
+      }
+
+      function updateCard(card, name, h) {
+        const badge = card.querySelector("[data-badge]");
+        badge.textContent = h.state.toUpperCase();
+        badge.className = "badge badge-" + h.state;
+
+        const errEl = card.querySelector("[data-error]");
+        errEl.textContent = h.error || "";
+
+        card.querySelector("[data-since]").textContent =
+          h.state + " for " + sinceStr(h.since);
+
+        const btn = card.querySelector("[data-btn]");
+        btn.disabled = h.state === "connecting";
+      }
+
+      async function reconnect(name) {
+        try {
+          await fetch(RECONNECT_URL(name), { method: "POST" });
+        } catch (_) {}
+        // Immediately refresh so button disables.
+        await fetchStatus();
+      }
+
+      // Refresh since-timers every second without re-fetching.
+      function refreshTimers() {
+        if (!lastStatus) return;
+        const grid = document.getElementById("host-grid");
+        for (const card of grid.children) {
+          const name = card.dataset.host;
+          const h = lastStatus.hosts?.[name];
+          if (h) card.querySelector("[data-since]").textContent =
+            h.state + " for " + sinceStr(h.since);
+          const uEl = document.getElementById("srv-uptime");
+          if (lastStatus.uptime_s != null) {
+            const elapsed = Math.round((Date.now() - statusFetchedAt) / 1000);
+            uEl.textContent = fmtDuration(lastStatus.uptime_s + elapsed);
+          }
+        }
+      }
+
+      let statusFetchedAt = Date.now();
+      const _origFetch = fetchStatus;
+      async function fetchStatusTimed() {
+        statusFetchedAt = Date.now();
+        await _origFetch();
+      }
+
+      // ── Log rendering ──────────────────────────────────────────────────────────────
+      let lastLogLen = 0;
+
+      async function fetchLogs() {
+        try {
+          const r = await fetch(LOGS_URL);
+          if (!r.ok) return;
+          const lines = await r.json();
+          if (!Array.isArray(lines) || lines.length === lastLogLen) return;
+          lastLogLen = lines.length;
+          renderLogs(lines);
+        } catch (_) {}
+      }
+
+      function renderLogs(lines) {
+        const el = document.getElementById("log-list");
+        el.innerHTML = "";
+        // Reversed (newest first via column-reverse flex).
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i];
+          const div = document.createElement("div");
+          div.className = "log-line " + logClass(line);
+          div.textContent = line;
+          el.appendChild(div);
+        }
+      }
+
+      function logClass(line) {
+        const l = line.toLowerCase();
+        if (l.includes("failed") || l.includes("error") || l.includes("fatal")) return "err";
+        if (l.includes("ready") || l.includes("online")) return "ok";
+        if (l.includes("config:") || l.includes("shutting")) return "dim";
+        return "";
+      }
+
+      function escHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      // ── Init ──────────────────────────────────────────────────────────────────────
+      fetchStatusTimed();
+      fetchLogs();
+      setInterval(fetchStatusTimed, 3000);
+      setInterval(refreshTimers, 1000);
+      setInterval(fetchLogs, 2000);
+    </script>
+  </body>
+</html>

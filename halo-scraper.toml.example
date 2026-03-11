@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────
+#  halo-scraper configuration
+#  Copy this file to halo-scraper.toml and edit it.
+#  Place halo-scraper.toml next to the scraper binary (or in the working directory).
+# ─────────────────────────────────────────────
+
+
+[server]
+# Address the WebSocket server listens on.
+# Overlays and the debug page connect here.
+addr = ":9000"
+
+# Maximum rate to send tick messages to WebSocket clients.
+# Halo CE ticks at 30Hz — set lower if overlays don't need full fidelity.
+# Example: 10 = scoreboard overlay, 30 = smooth position/health tracking.
+tick_hz = 30
+
+
+[pocketbase]
+# Set to false to disable all PocketBase writes entirely.
+# Useful when you don't need persistent stat storage.
+enabled = false
+
+# Base URL of your PocketBase instance.
+url = "http://localhost:8090"
+
+
+[performance]
+# How often to poll when not in a game (menu, lobby, postgame).
+# Higher = less CPU, slower state detection. 500ms is plenty.
+idle_ms = 500
+
+# Spin-wait interval while in game, waiting for the next tick.
+# Halo CE runs at 30Hz (~33ms per tick). At 10ms we check ~3x per tick.
+# Raise to 16–33ms to cut CPU use, at the cost of slight tick-read latency.
+game_ms = 10
+
+# Set to false to skip event detection entirely (kills, deaths, spawns, etc.).
+# Note: game_start and game_end still fire regardless of this setting.
+# Saves per-tick memory reads. Use when you only need raw player state.
+events = true
+
+
+# ─────────────────────────────────────────────
+#  Hosts — add or remove [[hosts]] blocks freely.
+#  Failed hosts are skipped at startup; the rest will still run.
+#
+#  Required: name, qmp_sock
+#  Optional: idle_ms, game_ms, events  (override [performance] defaults)
+# ─────────────────────────────────────────────
+
+[[hosts]]
+name     = "xemu-host-01"
+qmp_sock = "/path/to/xemu-host-01/qmp/xemu-host-01.sock"
+
+# Add more instances as needed:
+# [[hosts]]
+# name     = "xemu-host-02"
+# qmp_sock = "/path/to/xemu-host-02/qmp/xemu-host-02.sock"
+# idle_ms  = 1000
+# game_ms  = 33
+# events   = false

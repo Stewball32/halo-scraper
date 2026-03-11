@@ -1,0 +1,29 @@
+# Compiled binaries
+/localproof
+/scraper
+/cmd/scraper/scraper
+/cmd/prove/prove
+/cmd/localproof/localproof
+
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.html
+
+# Local config (machine-specific socket paths)
+halo-scraper.toml
+
+# Claude Code instructions and local settings (not for general contributors)
+CLAUDE.md
+.claude/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
