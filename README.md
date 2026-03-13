@@ -1,6 +1,6 @@
-# cairo-station
+# cairo-station-LAN
 
-Run xemu (original Xbox emulator) in Docker with a real IP address on your network — not NAT. Connect debuggers, FTP, and XLink Kai directly from any device via Tailscale, no SSH tunnels required.
+Run up to three independent xemu (original Xbox emulator) instances in Docker, each with its own bridge network. Access XBDM and FTP from anywhere via SSH tunnel — no Tailscale required.
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
@@ -8,25 +8,31 @@ Run xemu (original Xbox emulator) in Docker with a real IP address on your netwo
 
 ## What's Running
 
-| Container | Address | What It Does |
-|-----------|---------|--------------|
-| xemu | 172.20.0.49 | The emulator — browser UI on `:3001`, QMP on `:4444` |
-| Xbox | 172.20.0.50 / .51 | Emulated Xbox — FTP on `:21`, XBDM debug on `:731` |
-| StatsBorg | 172.20.0.45 | Reads Halo 2 post-game stats — web viewer on `:8080` |
-| XLink Kai | 172.20.0.25 | Online system link gaming — config UI on `:34522` |
-| Tailscale | 172.20.0.10 | Lets you reach all of 172.20.0.0/24 from anywhere |
-| Grafana | 172.20.0.41 | Network health dashboards on `:3000` |
+Two containers per instance:
+
+| Container | What It Does |
+|-----------|--------------|
+| `xemu-N` | The emulator — browser UI, QMP, halo-scraper WebSocket |
+| `relay-N` | socat — forwards XBDM (`:731`) and FTP (`:21`) to the Xbox |
+
+### Port Map
+
+| | Instance 1 | Instance 2 | Instance 3 |
+|-|-----------|-----------|-----------|
+| Selkies HTTP | 3000 | 3010 | 3020 |
+| Selkies HTTPS | 3001 | 3011 | 3021 |
+| QMP | 4444 | 4454 | 4464 |
+| halo-scraper WS | 9000 | 9010 | 9020 |
+| XBDM relay | 731 | 732 | 733 |
+| FTP relay | 2121 | 2122 | 2123 |
+
+All ports bind to `127.0.0.1` only — not exposed publicly.
 
 ---
 
 ## Setup
 
-**You'll need:** A Linux host, Docker with Compose V2, and a free [Tailscale](https://tailscale.com) account.
-
-```bash
-git clone --recurse-submodules https://github.com/Roasted-Codes/cairo-station.git
-cd cairo-station
-```
+**You'll need:** A Linux host with Docker Compose V2.
 
 Put your Xbox files in `services/xemu/data/emulator/`:
 
@@ -35,55 +41,65 @@ Put your Xbox files in `services/xemu/data/emulator/`:
 | `mcpx_1.0.bin` | Boot ROM |
 | `CerbiosDebug.bin` | BIOS |
 | `iguana-eeprom.bin` | EEPROM |
-| `iguana-dev.qcow2` | Hard drive image (~3.6 GB — not in git, get this separately) |
+| `iguana-dev.qcow2` | Hard drive image (~3.6 GB — not in git) |
 
-Create a `.env` file with your [Tailscale auth key](https://login.tailscale.com/admin/settings/keys) (reusable, ephemeral):
-
-```bash
-echo "TS_AUTHKEY=tskey-auth-..." > .env
-```
+Build the image (only needed once, or after Dockerfile changes):
 
 ```bash
-docker compose build
-docker compose up -d
+docker compose --env-file .env.1 build
 ```
-
-Tailscale connects automatically. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines) and approve the `172.20.0.0/24` subnet route — or add `autoApprovers` to your ACLs to skip this step entirely.
-
-Once that's done, every device on your Tailscale network can reach the Xbox directly.
 
 ---
 
-## Access
+## Running Instances
 
-| | Address |
-|-|---------|
-| xemu browser UI (gamepad works) | `https://172.20.0.49:3001` |
-| FTP — username `xbox`, password `xbox` | `172.20.0.50:21` |
-| XBDM debug (Assembly, Cxbx, etc.) | `172.20.0.51:731` |
-| StatsBorg stats viewer | `http://172.20.0.45:8080` |
-| XLink Kai | `http://172.20.0.25:34522` |
-| Grafana | `http://172.20.0.41:3000` — login: admin / admin |
+```bash
+# Start
+docker compose --env-file .env.1 up -d
+docker compose --env-file .env.2 up -d
+docker compose --env-file .env.3 up -d
+
+# Logs
+docker compose --env-file .env.1 logs -f xemu
+
+# Stop
+docker compose --env-file .env.1 down
+```
+
+Instances 2 and 3 require their own data directories with separate qcow2 files (each Xbox needs independent HDD state). See `DATA_DIR` in `.env.2` / `.env.3`.
 
 ---
 
-## Updating
+## Access via SSH Tunnel
 
-**Pull upstream changes and rebuild** (safe — your stats history, BIOS files, and game data are never touched):
-
-```bash
-git pull --recurse-submodules          # update cairo-station + StatsBorg
-docker compose build statsborg xemu    # rebuild images that have code baked in
-docker compose up -d                   # restart with new images
-```
-
-To update only StatsBorg:
+All ports are `127.0.0.1`-only on the server. Tunnel from your workstation:
 
 ```bash
-git submodule update --remote services/statsborg/app
-git add services/statsborg/app && git commit -m "Bump StatsBorg"
-docker compose build statsborg && docker compose up -d statsborg
+# Instance 1
+ssh -L 731:127.0.0.1:731 -L 21:127.0.0.1:2121 user@server
+# Assembly → localhost:731  |  FTP → localhost:21
+
+# Instance 2
+ssh -L 731:127.0.0.1:732 -L 21:127.0.0.1:2122 user@server
+
+# Instance 3
+ssh -L 731:127.0.0.1:733 -L 21:127.0.0.1:2123 user@server
 ```
+
+**FTP note:** Active mode only. Passive fails because the Xbox advertises its internal IP (`172.20.x.50`) for data connections, which isn't reachable from home. Use `lftp` with `set ftp:passive-mode off`, or FileZilla in active mode.
+
+---
+
+## Xbox Network Setup
+
+Each instance has its own isolated Docker bridge subnet. Configure static IPs inside Xbox Dashboard → Settings → Network Settings → Manual:
+
+| | Instance 1 | Instance 2 | Instance 3 |
+|-|-----------|-----------|-----------|
+| Title IP | 172.20.1.50 | 172.20.2.50 | 172.20.3.50 |
+| Debug IP | 172.20.1.51 | 172.20.2.51 | 172.20.3.51 |
+| Gateway | 172.20.1.1 | 172.20.2.1 | 172.20.3.1 |
+| Subnet | 255.255.255.0 | 255.255.255.0 | 255.255.255.0 |
 
 ---
 
@@ -91,11 +107,11 @@ docker compose build statsborg && docker compose up -d statsborg
 
 Getting xemu's pcap networking to work inside Docker required solving three bugs that cause silent failures:
 
-1. **Packet receive never works** — xemu can send packets but the receive socket never fires. Fixed by a small shim ([`pcap_immediate.c`](services/xemu/data/emulator/pcap_immediate.c)) that enables immediate mode on the capture device. The shim is compiled into the image automatically during `docker compose build` and injected via `/etc/ld.so.preload` at runtime.
+1. **Packet receive never works** — xemu can send packets but the receive socket never fires. Fixed by a small shim ([`pcap_immediate.c`](services/xemu/data/emulator/pcap_immediate.c)) that enables immediate mode on the capture device. Compiled inside the container at startup and injected via `/etc/ld.so.preload`.
 
-2. **TCP always times out even though ping works** — the Linux kernel leaves TCP checksums partially filled, expecting the NIC hardware to complete them. On a software bridge, nothing ever does, so the Xbox drops every TCP packet. Fixed by disabling TX checksum offloading on the container's network interface at startup.
+2. **TCP always times out even though ping works** — the Linux kernel leaves TCP checksums partially filled, expecting the NIC hardware to complete them. On a software bridge, nothing ever does, so the Xbox drops every TCP packet. The relay container runs `ethtool -K eth0 tx off` at startup to fix this.
 
-3. **Containers can't talk to the Xbox's IPs** — Linux bridge networking blocks a container from reaching an IP that sits on the same bridge port as itself. Tailscale sidesteps this completely: remote traffic routes through the subnet router instead of across the bridge.
+3. **XBDM/FTP relay** — the socat relay sits on a different bridge port than xemu, bypassing Linux bridge hairpin mode. It relays `:731` → Xbox debug IP and `:21` → Xbox title IP.
 
 Full details in [CLAUDE.md](CLAUDE.md).
 
@@ -105,14 +121,12 @@ Full details in [CLAUDE.md](CLAUDE.md).
 
 | Symptom | What to Check |
 |---------|---------------|
-| xemu won't start | File paths in `services/xemu/data/emulator/xemu.toml` under `[sys.files]` |
-| Sends but never receives packets | `docker exec xemu cat /etc/ld.so.preload` — must include `pcap_immediate.so` |
-| Ping works but FTP/XBDM times out | `docker exec xemu ethtool -k eth0 \| grep tx-checksumming` — must show `off` |
-| Can't reach anything remotely | Tailscale admin console — the `172.20.0.0/24` route must be approved |
-| Gamepad stops working in-game | xemu auto-saves input config — run `git diff services/xemu/data/emulator/xemu.toml` and revert if port bindings changed |
+| xemu won't start | File paths in `xemu.toml` under `[sys.files]` — must match what's in `emulator/` |
+| Sends but never receives packets | `docker exec xemu-1 cat /etc/ld.so.preload` — must include `pcap_immediate.so` |
+| Ping works but FTP/XBDM times out | Check relay logs: `docker compose --env-file .env.1 logs relay` |
+| SSH tunnel connects but no data flows | Confirm relay is running: `docker ps \| grep relay` |
+| Gamepad stops working in-game | xemu auto-saves input config — `git diff services/xemu/data/emulator/xemu.toml` and revert if port bindings changed |
 
 ---
 
-[xemu.app](https://xemu.app) · [XLink Kai](https://www.teamxlink.co.uk) · [Tailscale](https://tailscale.com) · [Issues](https://github.com/Roasted-Codes/cairo-station/issues)
-
-GPL-3.0 — built on [linuxserver/docker-xemu](https://github.com/linuxserver/docker-xemu)
+[xemu.app](https://xemu.app) · [halo-scraper](https://github.com/Stewball32/halo-scraper) · GPL-3.0 — built on [linuxserver/docker-xemu](https://github.com/linuxserver/docker-xemu)
