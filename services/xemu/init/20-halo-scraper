@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# =============================================================================
+# halo-scraper launcher
+# =============================================================================
+# Starts halo-scraper in the background as root (required for /proc/<pid>/mem).
+# Waits for xemu's QMP Unix socket before launching, since init scripts run
+# before the desktop session starts xemu.
+# =============================================================================
+
+(
+  echo "[20-halo-scraper] waiting for QMP socket at /tmp/qmp.sock..."
+  while [ ! -S /tmp/qmp.sock ]; do sleep 1; done
+  echo "[20-halo-scraper] QMP socket found, starting halo-scraper"
+  cd /opt/halo-scraper
+  exec ./scraper 2>&1 | tee /var/log/halo-scraper.log
+) &

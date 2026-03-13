@@ -39,7 +39,9 @@ volumes:
 
 services:
   xemu:
-    build: ./services/xemu
+    build:
+      context: ..                                    # Parent dir so Dockerfile can access halo-scraper/
+      dockerfile: cairo-station-LAN/services/xemu/Dockerfile
     image: xemu-bridged:latest
     container_name: xemu
     privileged: true  # Required for packet capture (pcap) in bridged mode
@@ -62,10 +64,12 @@ services:
     volumes:
       - ./services/xemu/data:/config
       - ./services/xemu/init:/custom-cont-init.d  # Run setcap as root at init
+      - ./services/xemu/data/halo-scraper/halo-scraper.toml:/opt/halo-scraper/halo-scraper.toml:ro  # halo-scraper config (editable without rebuild)
     ports:
       - "127.0.0.1:3000:3000"   # HTTP interface (localhost + SSH tunnel only)
       - "127.0.0.1:3001:3001"   # HTTPS interface (localhost + SSH tunnel only)
       - "127.0.0.1:4444:4444"   # QMP (localhost + SSH tunnel only)
+      - "127.0.0.1:9000:9000"   # halo-scraper WebSocket (localhost + SSH tunnel only)
       # Ports bound to 127.0.0.1 so Docker's iptables DNAT rules don't
       # intercept container-to-container bridge traffic. Remote access
       # via Tailscale routes directly to 172.20.0.49, bypassing DNAT.

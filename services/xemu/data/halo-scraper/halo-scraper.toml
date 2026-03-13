@@ -1,0 +1,15 @@
+[server]
+addr = ":9000"
+tick_hz = 30
+
+[pocketbase]
+enabled = false
+
+[performance]
+idle_ms = 1000
+game_ms = 33
+events = false
+
+[[hosts]]
+name = "xemu"
+qmp_sock = "/tmp/qmp.sock"
