@@ -1,286 +1,86 @@
 ---
 # ============================================================================
-# Roasted-Codes xemu + XLink Kai Docker Compose Configuration
+# xemu + halo-scraper — minimal multi-instance compose
 # ============================================================================
-# This configuration provides:
-#   - xemu emulator with custom config management and automation
-#   - XLink Kai for LAN gaming over the internet
-#   - Tailscale subnet router for remote access
-#   - dnsmasq for DHCP/DNS on the bridge network
-#   - nettools sidecar (iperf3, mtr, tcpdump) for diagnostics
-#   - Network telemetry: Prometheus + Grafana + network_exporter + xlink-monitor
+# Two services per instance: xemu (with embedded halo-scraper) + relay (socat)
 #
-# Features:
-#   - CPU-only rendering (no GPU required)
-#   - Automatic config symlinking to /config/emulator/xemu.toml
-#   - Optional passleader automation script (auto-runs if present)
-#   - XLink Kai for system link gaming over internet
+# Usage:
+#   docker compose --env-file .env.1 up -d   # instance 1
+#   docker compose --env-file .env.2 up -d   # instance 2
+#   docker compose --env-file .env.3 up -d   # instance 3
 #
-# Based on: LinuxServer.io docker-xemu
-# See CHANGELOG.md for all modifications
+# SSH tunnels (from workstation):
+#   ssh -L 731:127.0.0.1:${XBDM_PORT} -L 21:127.0.0.1:${FTP_PORT} user@server
+#   Assembly → localhost:731  |  FTP → localhost:21 (active mode only)
 # ============================================================================
 
-# Virtual LAN for xemu + XLink Kai communication
-# Both containers share this bridge for layer 2 broadcast traffic
 networks:
   xemu_lan:
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: br-xemu_lan
+      com.docker.network.bridge.name: ${BRIDGE_NAME}
     ipam:
       config:
-        - subnet: 172.20.0.0/24
-          gateway: 172.20.0.1
-
-volumes:
-  tailscale-state:    # Persists Tailscale auth across container restarts
-  prometheus-data:    # Persists Prometheus metrics (90-day retention)
-  grafana-data:       # Persists Grafana dashboards and settings
+        - subnet: ${SUBNET}
+          gateway: ${GATEWAY}
 
 services:
   xemu:
     build:
-      context: ..                                    # Parent dir so Dockerfile can access halo-scraper/
+      context: ..
       dockerfile: cairo-station-LAN/services/xemu/Dockerfile
     image: xemu-bridged:latest
-    container_name: xemu
-    privileged: true  # Required for packet capture (pcap) in bridged mode
+    container_name: xemu-${INSTANCE}
+    privileged: true
     security_opt:
       - seccomp:unconfined
     cap_add:
-      - NET_ADMIN    # Required for bridged networking (TAP device)
+      - NET_ADMIN
     devices:
-      - /dev/net/tun:/dev/net/tun  # Required for bridged networking
-      - /dev/uinput:/dev/uinput    # Required for Selkies virtual gamepad
+      - /dev/net/tun:/dev/net/tun
+      - /dev/uinput:/dev/uinput
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - TZ=Etc/UTC
-      # CPU-only rendering settings (no GPU required)
       - DISABLE_ZINK=true
       - DISABLE_DRI3=true
-      # Enable Selkies gamepad passthrough
       - SELKIES_GAMEPAD_ENABLED=true
     volumes:
-      - ./services/xemu/data:/config
-      - ./services/xemu/init:/custom-cont-init.d  # Run setcap as root at init
-      - ./services/xemu/data/halo-scraper/halo-scraper.toml:/opt/halo-scraper/halo-scraper.toml:ro  # halo-scraper config (editable without rebuild)
+      - ${DATA_DIR}:/config
+      - ./services/xemu/init:/custom-cont-init.d
+      - ./services/xemu/data/halo-scraper/halo-scraper.toml:/opt/halo-scraper/halo-scraper.toml:ro
     ports:
-      - "127.0.0.1:3000:3000"   # HTTP interface (localhost + SSH tunnel only)
-      - "127.0.0.1:3001:3001"   # HTTPS interface (localhost + SSH tunnel only)
-      - "127.0.0.1:4444:4444"   # QMP (localhost + SSH tunnel only)
-      - "127.0.0.1:9000:9000"   # halo-scraper WebSocket (localhost + SSH tunnel only)
-      # Ports bound to 127.0.0.1 so Docker's iptables DNAT rules don't
-      # intercept container-to-container bridge traffic. Remote access
-      # via Tailscale routes directly to 172.20.0.49, bypassing DNAT.
+      - "127.0.0.1:${HTTP_PORT}:3000"
+      - "127.0.0.1:${HTTPS_PORT}:3001"
+      - "127.0.0.1:${QMP_PORT}:4444"
+      - "127.0.0.1:${SCRAPER_PORT}:9000"
     networks:
       xemu_lan:
-        ipv4_address: 172.20.0.49
-    dns:
-      - 127.0.0.11  # Docker's embedded resolver (will forward to dnsmasq)
-      - 172.20.0.2  # Fallback to local dnsmasq
+        ipv4_address: ${XEMU_IP}
     shm_size: "1gb"
-    depends_on:
-      - dhcp  # Ensure DHCP/DNS is running before xemu
     restart: unless-stopped
 
-  statsborg:
-    build: ./services/statsborg
-    image: statsborg:latest
-    container_name: StatsBorg
-    environment:
-      - WATCH_MODE=qmp            # qmp (default) or xbdm
-      - XBDM_HOST=172.20.0.51     # Xbox debug interface
-      - XBDM_PORT=731
-      - QMP_HOST=172.20.0.49      # xemu QMP (used if WATCH_MODE=qmp)
-      - QMP_PORT=4444
-      - WEB_PORT=8080
-    volumes:
-      - ./services/statsborg/history:/app/history  # Persist game history across rebuilds
+  relay:
+    # Relays XBDM (731 → Xbox debug IP) and FTP (21 → Xbox title IP).
+    # ethtool tx off is critical: without it the Xbox silently drops all TCP
+    # while ICMP ping still works (kernel computes ICMP checksums in software).
+    image: alpine/socat
+    container_name: relay-${INSTANCE}
+    entrypoint: sh
+    command: >
+      -c "apk add --no-cache ethtool socat > /dev/null 2>&1;
+          ethtool -K eth0 tx off 2>/dev/null || true;
+          socat TCP-LISTEN:731,reuseaddr,fork TCP:${XBOX_DEBUG_IP}:731 &
+          exec socat TCP-LISTEN:21,reuseaddr,fork TCP:${XBOX_TITLE_IP}:21"
+    cap_add:
+      - NET_ADMIN
     ports:
-      - 8080:8080                 # pgcr_server web UI
+      - "127.0.0.1:${XBDM_PORT}:731"
+      - "127.0.0.1:${FTP_PORT}:21"
     networks:
       xemu_lan:
-        ipv4_address: 172.20.0.45
+        ipv4_address: ${RELAY_IP}
     depends_on:
       - xemu
-    restart: unless-stopped
-
-  xlinkkai:
-    image: ich777/xlinkkaievolution
-    container_name: xlink
-    environment:
-      - INTERFACE_NAME=eth0  # Use container's bridge interface
-      - UMASK=000
-      - UID=99
-      - GID=100
-    volumes:
-      - ./services/xlinkkai:/xlinkkaievolution
-      - ./services/xlinkkai/user.sh:/opt/scripts/user.sh  # Auto-join arena on startup
-    ports:
-      - 34522:34522      # XLink Kai web interface
-      - 30000:30000/udp  # P2P connections to orbital
-      - 34523:34523/udp  # XLink Kai game tunneling
-      - 9428:9428        # xlink-monitor Prometheus metrics
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.25
-    dns:
-      - 127.0.0.11  # Docker's embedded resolver (will forward to dnsmasq)
-      - 172.20.0.2  # Fallback to local dnsmasq
-    privileged: true
-    cap_add:
-      - NET_ADMIN
-    depends_on:
-      - dhcp  # Ensure DHCP/DNS is running before xlinkkai
-    restart: unless-stopped
-
-  tailscale:
-    image: tailscale/tailscale:latest
-    container_name: tailscale
-    hostname: tailscale
-    entrypoint: /bin/sh
-    command: >
-      -c "apk add --no-cache ethtool > /dev/null 2>&1;
-          ethtool -K eth0 tx off 2>/dev/null || true;
-          exec /usr/local/bin/containerboot"
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    sysctls:
-      - net.ipv4.ip_forward=1
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}   # Set in .env — generate a reusable key at tailscale.com/admin/settings/keys
-      - TS_EXTRA_ARGS=--advertise-routes=172.20.0.0/24 --accept-dns=false
-      - TS_STATE_DIR=/var/lib/tailscale
-    volumes:
-      - tailscale-state:/var/lib/tailscale
-    ports:
-      - 41641:41641/udp  # WireGuard port for direct connections
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.10
-    restart: unless-stopped
-
-  # xbdm:  # Disabled in favor of Tailscale direct access (uncomment if Tailscale not used)
-  #   image: alpine/socat
-  #   container_name: xbdm
-  #   entrypoint: /bin/sh
-  #   command: >
-  #     -c "apk add --no-cache ethtool > /dev/null 2>&1;
-  #         ethtool -K eth0 tx off 2>/dev/null || true;
-  #         exec socat TCP-LISTEN:731,reuseaddr,fork TCP:172.20.0.51:731"
-  #   cap_add:
-  #     - NET_ADMIN    # Required for ethtool to disable TX checksum offloading
-  #   ports:
-  #     - 127.0.0.1:731:731  # XBDM relay (localhost only, use SSH tunnel to access)
-  #   networks:
-  #     xemu_lan:
-  #       ipv4_address: 172.20.0.11
-  #   depends_on:
-  #     - xemu
-  #   restart: unless-stopped
-
-  dhcp:
-    image: drpsychick/dnsmasq
-    container_name: dnsmasq
-    cap_add:
-      - NET_ADMIN    # Required for DHCP server
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.2
-    volumes:
-      - ./services/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
-    restart: unless-stopped
-
-  # l2tunnel:
-  #   build: ./services/l2tunnel
-  #   container_name: l2tunnel
-  #   cap_add:
-  #     - NET_ADMIN
-  #     - NET_RAW
-  #   environment:
-  #     - HUB_PORT=1337
-  #     # XBOX_MAC auto-detected from EEPROM, or set manually:
-  #     # - XBOX_MAC=00:50:f2:xx:xx:xx
-  #   volumes:
-  #     - ./services/xemu/data/emulator/iguana-eeprom.bin:/config/emulator/iguana-eeprom.bin:ro
-  #   networks:
-  #     xemu_lan:
-  #       ipv4_address: 172.20.0.30
-  #   restart: unless-stopped
-
-  # ── Diagnostics ──────────────────────────────────────────────────────────────
-
-  nettools:
-    build: ./services/nettools
-    container_name: nettools
-    ports:
-      - 5201:5201  # iperf3 server
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.35
-    restart: unless-stopped
-
-  # ── Telemetry ─────────────────────────────────────────────────────────────────
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.retention.time=90d'
-    volumes:
-      - ./services/telemetry/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    ports:
-      - 9090:9090
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.40
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - ./services/telemetry/grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana-data:/var/lib/grafana
-    ports:
-      - 3002:3000  # Host 3002 → container 3000 (3000/3001 already used by xemu)
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.41
-    depends_on:
-      - prometheus
-    restart: unless-stopped
-
-  network-exporter:
-    image: syepes/network_exporter:latest
-    container_name: network-exporter
-    security_opt:
-      - seccomp:unconfined  # Binary has file caps (cap_net_raw+eip); Docker seccomp blocks setcap'd binaries
-    cap_add:
-      - NET_RAW   # Required for ICMP/MTR probes
-      - NET_ADMIN # Required for MTR probes
-    volumes:
-      - ./services/telemetry/network-exporter/network_exporter.yml:/app/cfg/network_exporter.yml:ro
-    networks:
-      xemu_lan:
-        ipv4_address: 172.20.0.42
-    restart: unless-stopped
-
-  xlink-monitor:
-    build: ./services/telemetry/xlink-monitor
-    container_name: Xlink-Monitor
-    network_mode: "service:xlinkkai"  # Share xlinkkai's network namespace to see its traffic
-    cap_add:
-      - NET_RAW    # Required for tcpdump packet capture and ICMP ping
-      - NET_ADMIN  # Required for promiscuous mode
-    volumes:
-      - ./services/telemetry/xlink-monitor/players.json:/app/players.json:ro
-    depends_on:
-      - xlinkkai
     restart: unless-stopped
