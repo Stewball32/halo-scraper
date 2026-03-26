@@ -24,6 +24,9 @@ CLAUDE.md
 *.swo
 *~
 
+# Frontend build output (generated from frontend/)
+/web/
+
 # OS
 .DS_Store
 Thumbs.db

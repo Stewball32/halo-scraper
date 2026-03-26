@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -19,18 +20,26 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"halo-scraper/internal/discovery"
 	"halo-scraper/internal/halo"
 	"halo-scraper/internal/pb"
+	"halo-scraper/internal/podman"
 	"halo-scraper/internal/ws"
 	"halo-scraper/internal/xemu"
 )
+
+// ---------------------------------------------------------------------------
+// Config types
+// ---------------------------------------------------------------------------
 
 type config struct {
 	Server struct {
 		Addr   string `toml:"addr"`
 		TickHz int    `toml:"tick_hz"`
 	} `toml:"server"`
-	PocketBase struct {
+	SocketDir    string `toml:"socket_dir"`
+	SocketPollMs int    `toml:"socket_poll_ms"`
+	PocketBase   struct {
 		Enabled bool   `toml:"enabled"`
 		URL     string `toml:"url"`
 	} `toml:"pocketbase"`
@@ -39,7 +48,8 @@ type config struct {
 		GameMs int  `toml:"game_ms"`
 		Events bool `toml:"events"`
 	} `toml:"performance"`
-	Hosts []hostCfg `toml:"hosts"`
+	Containers podman.Config `toml:"containers"`
+	Hosts      []hostCfg     `toml:"hosts"`
 }
 
 type hostCfg struct {
@@ -91,11 +101,19 @@ func loadConfig() config {
 	cfg := config{}
 	cfg.Server.Addr = ":9000"
 	cfg.Server.TickHz = 30
+	cfg.SocketPollMs = 2000
 	cfg.PocketBase.Enabled = true
 	cfg.PocketBase.URL = "http://localhost:8090"
 	cfg.Performance.IdleMs = 500
 	cfg.Performance.GameMs = 10
 	cfg.Performance.Events = true
+
+	// Container defaults.
+	cfg.Containers.PortBase = 3100
+	cfg.Containers.PortStride = 10
+	cfg.Containers.StateFile = "./containers/state.json"
+	cfg.Containers.ShmSize = "1g"
+	cfg.Containers.BrowserShmSize = "2gb"
 
 	// Look next to the binary first, then fall back to working directory.
 	candidates := []string{}
@@ -107,6 +125,7 @@ func loadConfig() config {
 	for _, path := range candidates {
 		if _, err := toml.DecodeFile(path, &cfg); err == nil {
 			log.Printf("config: loaded %s", path)
+			resolveConfigPaths(path, &cfg)
 			return cfg
 		}
 	}
@@ -115,6 +134,33 @@ func loadConfig() config {
 	return cfg
 }
 
+// resolveConfigPaths makes all relative paths in the config absolute, anchored
+// to the directory containing the config file. This ensures volume mounts and
+// file references work regardless of the working directory.
+func resolveConfigPaths(cfgFile string, cfg *config) {
+	base, err := filepath.Abs(filepath.Dir(cfgFile))
+	if err != nil {
+		return
+	}
+	resolve := func(p *string) {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(base, *p)
+		}
+	}
+	resolve(&cfg.SocketDir)
+	resolve(&cfg.Containers.SocketDir)
+	resolve(&cfg.Containers.SharedDir)
+	resolve(&cfg.Containers.InitDir)
+	resolve(&cfg.Containers.ConfigsDir)
+	resolve(&cfg.Containers.BrowserDir)
+	resolve(&cfg.Containers.BrowserInitDir)
+	resolve(&cfg.Containers.StateFile)
+}
+
+// ---------------------------------------------------------------------------
+// Host status tracking
+// ---------------------------------------------------------------------------
+
 // hostStatus tracks the connection state of one xemu instance.
 type hostStatus struct {
 	State string    // "connecting" | "online" | "offline"
@@ -122,38 +168,91 @@ type hostStatus struct {
 	Since time.Time // when State last changed
 }
 
-func setStatus(mu *sync.Mutex, s *hostStatus, state, errMsg string) {
-	mu.Lock()
-	s.State = state
-	s.Error = errMsg
-	s.Since = time.Now()
-	mu.Unlock()
+// hostTracker manages per-host status and reconnect channels. It is safe for
+// concurrent use.
+type hostTracker struct {
+	mu             sync.Mutex
+	statuses       map[string]*hostStatus
+	reconnectChans map[string]chan struct{}
+	cancelFuncs    map[string]context.CancelFunc
 }
 
-// ringLog is an io.Writer that keeps the last maxLines log lines in memory.
-type ringLog struct {
-	mu    sync.Mutex
-	lines []string
-}
-
-func (r *ringLog) Write(p []byte) (int, error) {
-	line := strings.TrimRight(string(p), "\n")
-	r.mu.Lock()
-	r.lines = append(r.lines, line)
-	if len(r.lines) > 500 {
-		r.lines = r.lines[len(r.lines)-500:]
+func newHostTracker() *hostTracker {
+	return &hostTracker{
+		statuses:       make(map[string]*hostStatus),
+		reconnectChans: make(map[string]chan struct{}),
+		cancelFuncs:    make(map[string]context.CancelFunc),
 	}
-	r.mu.Unlock()
-	return len(p), nil
 }
 
-func (r *ringLog) Lines() []string {
-	r.mu.Lock()
-	out := make([]string, len(r.lines))
-	copy(out, r.lines)
-	r.mu.Unlock()
+func (t *hostTracker) register(name string, cancel context.CancelFunc) (<-chan struct{}, *hostStatus) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := &hostStatus{State: "connecting", Since: time.Now()}
+	t.statuses[name] = s
+	ch := make(chan struct{}, 1)
+	t.reconnectChans[name] = ch
+	t.cancelFuncs[name] = cancel
+	return ch, s
+}
+
+func (t *hostTracker) unregister(name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if cancel, ok := t.cancelFuncs[name]; ok {
+		cancel()
+	}
+	delete(t.statuses, name)
+	delete(t.reconnectChans, name)
+	delete(t.cancelFuncs, name)
+}
+
+func (t *hostTracker) setStatus(name, state, errMsg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.statuses[name]; ok {
+		s.State = state
+		s.Error = errMsg
+		s.Since = time.Now()
+	}
+}
+
+func (t *hostTracker) reconnect(name string) bool {
+	t.mu.Lock()
+	ch, ok := t.reconnectChans[name]
+	t.mu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+func (t *hostTracker) cancel(name string) {
+	t.mu.Lock()
+	cancel, ok := t.cancelFuncs[name]
+	t.mu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+func (t *hostTracker) snapshot() map[string]hostStatus {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]hostStatus, len(t.statuses))
+	for k, v := range t.statuses {
+		out[k] = *v
+	}
 	return out
 }
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
@@ -163,22 +262,22 @@ func main() {
 
 	cfg := loadConfig()
 
-	if len(cfg.Hosts) == 0 {
-		log.Fatal("config: no hosts defined")
+	useSocketDir := cfg.SocketDir != ""
+	if !useSocketDir && len(cfg.Hosts) == 0 {
+		log.Fatal("config: no hosts defined and socket_dir is empty")
 	}
 
 	hub := ws.NewHub()
+	tracker := newHostTracker()
+	startTime := time.Now()
 
-	// Per-host status and reconnect channels.
-	var statusMu sync.Mutex
-	statuses := make(map[string]*hostStatus, len(cfg.Hosts))
-	reconnectChans := make(map[string]chan struct{}, len(cfg.Hosts))
-	for _, host := range cfg.Hosts {
-		statuses[host.Name] = &hostStatus{State: "connecting", Since: time.Now()}
-		reconnectChans[host.Name] = make(chan struct{}, 1)
+	// Build host override map from [[hosts]] entries.
+	hostOverrides := make(map[string]hostCfg, len(cfg.Hosts))
+	for _, h := range cfg.Hosts {
+		hostOverrides[h.Name] = h
 	}
 
-	startTime := time.Now()
+	// --- HTTP endpoints ---
 
 	// GET /api/status
 	hub.Handle("/api/status", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,16 +290,15 @@ func main() {
 			Since string `json:"since"`
 			Error string `json:"error"`
 		}
-		statusMu.Lock()
-		hosts := make(map[string]hostJSON, len(statuses))
-		for name, s := range statuses {
+		snap := tracker.snapshot()
+		hosts := make(map[string]hostJSON, len(snap))
+		for name, s := range snap {
 			hosts[name] = hostJSON{
 				State: s.State,
 				Since: s.Since.UTC().Format(time.RFC3339),
 				Error: s.Error,
 			}
 		}
-		statusMu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -228,21 +326,32 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// Path: /api/hosts/{name}/reconnect
 		path := strings.TrimPrefix(r.URL.Path, "/api/hosts/")
 		name := strings.TrimSuffix(path, "/reconnect")
-		ch, ok := reconnectChans[name]
-		if !ok {
+		if !tracker.reconnect(name) {
 			http.Error(w, "unknown host", http.StatusNotFound)
 			return
-		}
-		select {
-		case ch <- struct{}{}:
-		default: // already queued
 		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.WriteHeader(http.StatusNoContent)
 	}))
+
+	// --- Podman container API ---
+
+	var mgr *podman.Manager
+	if cfg.Containers.Enabled {
+		// Inherit socket_dir so containers place sockets where the watcher looks.
+		containerCfg := cfg.Containers
+		if containerCfg.SocketDir == "" {
+			containerCfg.SocketDir = cfg.SocketDir
+		}
+		var err error
+		mgr, err = podman.NewManager(containerCfg)
+		if err != nil {
+			log.Fatalf("podman: %v", err)
+		}
+		registerContainerAPI(hub, mgr)
+	}
 
 	go func() {
 		if err := hub.ListenAndServe(cfg.Server.Addr); err != nil {
@@ -255,78 +364,173 @@ func main() {
 		pbClient = pb.NewClient(cfg.PocketBase.URL)
 	}
 
-	for _, host := range cfg.Hosts {
-		host := host
-		go runHost(host, cfg, hub, pbClient, statuses[host.Name], &statusMu, reconnectChans[host.Name])
+	// Top-level context cancelled on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if useSocketDir {
+		// --- Socket directory discovery mode ---
+		pollInterval := time.Duration(cfg.SocketPollMs) * time.Millisecond
+		if pollInterval <= 0 {
+			pollInterval = 2 * time.Second
+		}
+
+		watcher := discovery.NewWatcher(cfg.SocketDir, pollInterval,
+			// onAdd: new connectable socket found.
+			func(name, sockPath string) {
+				host := hostCfg{Name: name, QMPSock: sockPath}
+				if override, ok := hostOverrides[name]; ok {
+					host.IdleMs = override.IdleMs
+					host.GameMs = override.GameMs
+					host.Events = override.Events
+				}
+
+				hostCtx, cancel := context.WithCancel(ctx)
+				reconnect, status := tracker.register(name, cancel)
+				_ = status
+
+				go runHost(hostCtx, host, cfg, hub, pbClient, tracker, reconnect)
+			},
+			// onRemove: socket disappeared or went stale.
+			func(name string) {
+				log.Printf("%s: socket removed, cancelling", name)
+				tracker.cancel(name)
+				// Don't unregister yet — runHost will clean up when it exits.
+			},
+		)
+
+		log.Printf("discovery: watching %s (poll every %s)", cfg.SocketDir, pollInterval)
+		go watcher.Run(ctx)
+
+		// Also start any static [[hosts]] that have explicit qmp_sock (hybrid mode).
+		for _, host := range cfg.Hosts {
+			if host.QMPSock == "" {
+				continue // will be discovered via socket_dir
+			}
+			host := host
+			hostCtx, cancel := context.WithCancel(ctx)
+			reconnect, _ := tracker.register(host.Name, cancel)
+			go runHost(hostCtx, host, cfg, hub, pbClient, tracker, reconnect)
+		}
+	} else {
+		// --- Static [[hosts]] mode (backward compatible) ---
+		for _, host := range cfg.Hosts {
+			host := host
+			hostCtx, cancel := context.WithCancel(ctx)
+			reconnect, _ := tracker.register(host.Name, cancel)
+			go runHost(hostCtx, host, cfg, hub, pbClient, tracker, reconnect)
+		}
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	<-ctx.Done()
 	log.Println("shutting down")
 }
 
-// connect tries to initialise inst every 2 seconds for up to 10 seconds.
-// Returns the ready instance on success, or an error if the window expires.
-func connect(host hostCfg) (*xemu.Instance, error) {
+// ---------------------------------------------------------------------------
+// Per-host lifecycle
+// ---------------------------------------------------------------------------
+
+// connect tries to initialise inst every 2 seconds until ctx is cancelled or
+// 10 seconds elapse.
+func connect(ctx context.Context, host hostCfg) (*xemu.Instance, error) {
 	deadline := time.Now().Add(10 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		inst := &xemu.Instance{Name: host.Name, QMPSock: host.QMPSock}
 		if err := inst.Init(halo.AllLowGVAs); err == nil {
 			return inst, nil
 		} else {
 			lastErr = err
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 	return nil, lastErr
 }
 
 // runHost supervises one xemu instance: connects on startup, polls while alive,
-// then waits for a manual reconnect signal before trying again.
+// then waits for a reconnect signal or context cancellation before trying again.
 func runHost(
+	ctx context.Context,
 	host hostCfg,
 	cfg config,
 	hub *ws.Hub,
 	pbClient *pb.Client,
-	status *hostStatus,
-	mu *sync.Mutex,
+	tracker *hostTracker,
 	reconnect <-chan struct{},
 ) {
+	defer tracker.unregister(host.Name)
+
 	settings := host.resolve(cfg)
 
 	tryConnect := func() {
-		setStatus(mu, status, "connecting", "")
+		tracker.setStatus(host.Name, "connecting", "")
 		log.Printf("%s: initialising...", host.Name)
-		inst, err := connect(host)
+		inst, err := connect(ctx, host)
 		if err != nil {
 			log.Printf("%s: init failed: %v", host.Name, err)
-			setStatus(mu, status, "offline", err.Error())
+			tracker.setStatus(host.Name, "offline", err.Error())
 			return
 		}
 		log.Printf("%s: ready", host.Name)
 		hub.RegisterInstance(host.Name)
-		setStatus(mu, status, "online", "")
+		tracker.setStatus(host.Name, "online", "")
 
 		reader := halo.NewReader(inst, host.Name)
 		state := halo.NewTickState()
-		poll(reader, host.Name, hub, pbClient, state, settings)
+		poll(ctx, reader, host.Name, hub, pbClient, state, settings)
 
-		// poll returned — instance is dead.
+		// poll returned — instance is dead or context cancelled.
 		hub.UnregisterInstance(host.Name)
 		inst.Close()
-		log.Printf("%s: lost connection", host.Name)
-		setStatus(mu, status, "offline", "lost connection")
+		if ctx.Err() == nil {
+			log.Printf("%s: lost connection", host.Name)
+			tracker.setStatus(host.Name, "offline", "lost connection")
+		}
 	}
 
+	const (
+		retryMin = 10 * time.Second
+		retryMax = 60 * time.Second
+	)
+
 	tryConnect()
-	for range reconnect {
-		tryConnect()
+	retryDelay := retryMin
+
+	for {
+		// Only arm the auto-retry timer when offline.
+		// A nil channel blocks forever in select, which is what we want when online.
+		var retryTimer <-chan time.Time
+		if s, ok := tracker.snapshot()[host.Name]; ok && s.State == "offline" {
+			retryTimer = time.After(retryDelay)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-reconnect:
+			retryDelay = retryMin
+			tryConnect()
+		case <-retryTimer:
+			log.Printf("%s: auto-retrying connection (backoff %s)", host.Name, retryDelay)
+			tryConnect()
+			if s, ok := tracker.snapshot()[host.Name]; ok && s.State == "online" {
+				retryDelay = retryMin
+			} else if retryDelay < retryMax {
+				retryDelay *= 2
+			}
+		}
 	}
 }
 
 func poll(
+	ctx context.Context,
 	reader *halo.Reader,
 	name string,
 	hub *ws.Hub,
@@ -346,6 +550,10 @@ func poll(
 	const maxErrs = 5
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+
 		gameState, tick, err := reader.ReadGameState()
 		if err != nil {
 			errCount++
@@ -448,6 +656,10 @@ func poll(
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Broadcast helpers (unchanged)
+// ---------------------------------------------------------------------------
+
 func handleStateTransition(
 	name string,
 	tick uint32,
@@ -531,4 +743,135 @@ func broadcastEnvelope(env halo.Envelope, hub *ws.Hub, pbClient *pb.Client) {
 			pbClient.PostEvent(env.Instance, env.Tick, et, p)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Container API endpoints
+// ---------------------------------------------------------------------------
+
+func registerContainerAPI(hub *ws.Hub, mgr *podman.Manager) {
+	// GET /api/containers — list all containers with status.
+	// POST /api/containers — create a new container pair.
+	hub.Handle("/api/containers", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			list, err := mgr.List()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(list)
+
+		case http.MethodPost:
+			var body struct {
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+				http.Error(w, "name is required", http.StatusBadRequest)
+				return
+			}
+			info, err := mgr.Create(body.Name)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(info)
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
+	// Routes under /api/containers/{name}/...
+	hub.Handle("/api/containers/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			return
+		}
+
+		// Parse: /api/containers/{name}[/action]
+		path := strings.TrimPrefix(r.URL.Path, "/api/containers/")
+		parts := strings.SplitN(path, "/", 2)
+		name := parts[0]
+		action := ""
+		if len(parts) > 1 {
+			action = parts[1]
+		}
+
+		switch {
+		case r.Method == http.MethodPost && action == "start":
+			if err := mgr.Start(name); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodPost && action == "stop":
+			if err := mgr.Stop(name); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodDelete && action == "":
+			if err := mgr.Remove(name); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodGet && action == "":
+			status, err := mgr.Status(name)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
+
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+}
+
+// ---------------------------------------------------------------------------
+// ringLog
+// ---------------------------------------------------------------------------
+
+// ringLog is an io.Writer that keeps the last maxLines log lines in memory.
+type ringLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *ringLog) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	r.mu.Lock()
+	r.lines = append(r.lines, line)
+	if len(r.lines) > 500 {
+		r.lines = r.lines[len(r.lines)-500:]
+	}
+	r.mu.Unlock()
+	return len(p), nil
+}
+
+func (r *ringLog) Lines() []string {
+	r.mu.Lock()
+	out := make([]string, len(r.lines))
+	copy(out, r.lines)
+	r.mu.Unlock()
+	return out
 }

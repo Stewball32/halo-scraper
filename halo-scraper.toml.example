@@ -4,6 +4,22 @@
 #  Place halo-scraper.toml next to the scraper binary (or in the working directory).
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+#  Socket directory — auto-discover xemu instances
+#
+#  When set, the scraper watches this directory for .sock files.
+#  Each socket's filename (minus .sock) becomes the instance name.
+#  The watcher polls every socket_poll_ms (default 2000ms).
+#
+#  When a connectable socket appears, a scraper instance starts.
+#  When a socket disappears or goes stale, the instance is stopped.
+#
+#  Leave empty to use [[hosts]] only (backward compatible).
+# ─────────────────────────────────────────────
+
+socket_dir = "./containers/xemu/qmp"
+# socket_poll_ms = 2000
+
 
 [server]
 # Address the WebSocket server listens on.
@@ -42,21 +58,58 @@ events = true
 
 
 # ─────────────────────────────────────────────
-#  Hosts — add or remove [[hosts]] blocks freely.
-#  Failed hosts are skipped at startup; the rest will still run.
+#  Container management (podman)
 #
-#  Required: name, qmp_sock
-#  Optional: idle_ms, game_ms, events  (override [performance] defaults)
+#  When enabled, the scraper can create/start/stop/remove xemu+browser
+#  container pairs via the /api/containers endpoints.
+#  Ports are auto-allocated starting at port_base with a stride per instance.
+#
+#  Per-instance port layout (stride = 10):
+#    +0  xemu HTTP      (CUSTOM_PORT)
+#    +1  xemu HTTPS     (CUSTOM_HTTPS_PORT)
+#    +2  xemu WS        (CUSTOM_WS_PORT)
+#    +3  browser web    (WEB_LISTENING_PORT)
+#    +4  browser VNC    (VNC_LISTENING_PORT)
 # ─────────────────────────────────────────────
 
-[[hosts]]
-name     = "xemu-host-01"
-qmp_sock = "/path/to/xemu-host-01/qmp/xemu-host-01.sock"
+[containers]
+enabled     = false
+shared_dir  = "./containers/xemu/shared"
+init_dir    = "./containers/xemu/init"
+configs_dir = "./containers/xemu/configs"
+browser_dir      = "./containers/browser"
+browser_init_dir = "./containers/browser/init"
+port_base        = 3100
+port_stride = 10
+state_file  = "./containers/state.json"
 
-# Add more instances as needed:
+# Selkies streaming defaults (xemu container env vars).
+encoder           = "x264enc"
+framerate         = 60
+crf               = 20
+width             = 960
+height            = 720
+pixelflux_wayland = true
+drinode           = "/dev/dri/renderD128"
+shm_size          = "1g"
+browser_shm_size  = "2gb"
+
+
+# ─────────────────────────────────────────────
+#  Hosts — optional per-host overrides.
+#
+#  In socket_dir mode, these are matched by name to discovered sockets.
+#  A host with an explicit qmp_sock bypasses discovery (always started).
+#
+#  In legacy mode (socket_dir empty), hosts are the only source of instances.
+# ─────────────────────────────────────────────
+
 # [[hosts]]
-# name     = "xemu-host-02"
-# qmp_sock = "/path/to/xemu-host-02/qmp/xemu-host-02.sock"
-# idle_ms  = 1000
-# game_ms  = 33
+# name     = "xemu-alpha"
+# idle_ms  = 250
+# game_ms  = 16
 # events   = false
+
+# [[hosts]]
+# name     = "xemu-bravo"
+# qmp_sock = "/custom/path/to/xemu-bravo.sock"
