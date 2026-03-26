@@ -110,7 +110,7 @@
 </script>
 
 <svelte:head>
-  <title>Halo Scraper — Containers</title>
+  <title>Xemu Cartographer — Containers</title>
 </svelte:head>
 
 <ConfirmDialog

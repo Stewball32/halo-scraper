@@ -1,6 +1,6 @@
 # Setup Guide
 
-This guide walks through setting up the full halo-scraper stack: xemu with QMP, the scraper itself, and optional PocketBase persistence.
+This guide walks through setting up the full xemu-cartographer stack: xemu with QMP, the cartographer itself, and optional PocketBase persistence.
 
 ---
 
@@ -43,13 +43,13 @@ You should see a JSON capabilities greeting. Type `{"execute":"qmp_capabilities"
 
 ---
 
-## 2. Configure halo-scraper
+## 2. Configure xemu-cartographer
 
 ```bash
-cp halo-scraper.toml.example halo-scraper.toml
+cp xemu-cartographer.toml.example xemu-cartographer.toml
 ```
 
-Edit `halo-scraper.toml`. The only required change is the QMP socket path(s):
+Edit `xemu-cartographer.toml`. The only required change is the QMP socket path(s):
 
 ```toml
 [[hosts]]
@@ -69,16 +69,16 @@ The scraper needs root to read `/proc/<pid>/mem`:
 
 ```bash
 # Run directly
-sudo go run ./cmd/scraper
+sudo go run ./cmd/cartographer
 
 # Or build first, then run
-go build -o scraper ./cmd/scraper
-sudo ./scraper
+go build -o cartographer ./cmd/cartographer
+sudo ./cartographer
 ```
 
 You should see log lines like:
 ```
-config: loaded halo-scraper.toml
+config: loaded xemu-cartographer.toml
 xemu-host-01: found PID 12345
 xemu-host-01: QMP connected, translating addresses...
 xemu-host-01: online
@@ -91,7 +91,7 @@ Open `web/debug/index.html` in your browser to confirm the WebSocket feed is liv
 
 ## 4. Run as a systemd service (optional)
 
-Create `/etc/systemd/system/halo-scraper.service`:
+Create `/etc/systemd/system/xemu-cartographer.service`:
 
 ```ini
 [Unit]
@@ -100,8 +100,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/scraper
-WorkingDirectory=/etc/halo-scraper
+ExecStart=/usr/local/bin/cartographer
+WorkingDirectory=/etc/xemu-cartographer
 Restart=on-failure
 RestartSec=5
 
@@ -112,14 +112,14 @@ WantedBy=multi-user.target
 Then:
 ```bash
 # Copy binary and config
-sudo cp scraper /usr/local/bin/scraper
-sudo mkdir /etc/halo-scraper
-sudo cp halo-scraper.toml /etc/halo-scraper/halo-scraper.toml
+sudo cp cartographer /usr/local/bin/cartographer
+sudo mkdir /etc/xemu-cartographer
+sudo cp xemu-cartographer.toml /etc/xemu-cartographer/xemu-cartographer.toml
 
 # Enable and start
 sudo systemctl daemon-reload
-sudo systemctl enable --now halo-scraper
-sudo journalctl -fu halo-scraper
+sudo systemctl enable --now xemu-cartographer
+sudo journalctl -fu xemu-cartographer
 ```
 
 ---
@@ -133,7 +133,7 @@ If you want persistent match records, run PocketBase alongside the scraper:
 ./pocketbase serve --http="localhost:8090"
 ```
 
-Then in `halo-scraper.toml`:
+Then in `xemu-cartographer.toml`:
 ```toml
 [pocketbase]
 enabled = true
@@ -150,7 +150,7 @@ See [docs/pocketbase.md](pocketbase.md) for the collection schema to create.
 The scraper must run as root. Use `sudo`.
 
 **`xemu-host-01: failed to find PID`**
-xemu isn't running, or the container name doesn't match. The scraper tries `podman inspect <name>` first, then falls back to scanning `/proc`. Check that the `name` in `halo-scraper.toml` matches the running container name.
+xemu isn't running, or the container name doesn't match. The scraper tries `podman inspect <name>` first, then falls back to scanning `/proc`. Check that the `name` in `xemu-cartographer.toml` matches the running container name.
 
 **`QMP: connection refused` or `no such file`**
 The QMP socket path is wrong or the socket hasn't been created yet. Check that xemu started with `qmp_socket_path` set and that the file exists on the host.

@@ -1,4 +1,4 @@
-module halo-scraper
+module xemu-cartographer
 
 go 1.22
 

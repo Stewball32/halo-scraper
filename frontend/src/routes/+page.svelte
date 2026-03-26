@@ -61,7 +61,7 @@
 </script>
 
 <svelte:head>
-	<title>Halo Scraper — Dashboard</title>
+	<title>Xemu Cartographer — Dashboard</title>
 </svelte:head>
 
 <div class="flex h-full flex-col gap-4 overflow-y-auto p-4">

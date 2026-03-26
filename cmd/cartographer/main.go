@@ -1,7 +1,7 @@
 // scraper initialises all xemu instances and polls each one for Halo CE game
 // state. Run as root (needs /proc/<pid>/mem read access):
 //
-//	sudo go run ./cmd/scraper
+//	sudo go run ./cmd/cartographer
 package main
 
 import (
@@ -20,12 +20,12 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"halo-scraper/internal/discovery"
-	"halo-scraper/internal/halo"
-	"halo-scraper/internal/pb"
-	"halo-scraper/internal/podman"
-	"halo-scraper/internal/ws"
-	"halo-scraper/internal/xemu"
+	"xemu-cartographer/internal/discovery"
+	"xemu-cartographer/internal/halo"
+	"xemu-cartographer/internal/pb"
+	"xemu-cartographer/internal/podman"
+	"xemu-cartographer/internal/ws"
+	"xemu-cartographer/internal/xemu"
 )
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ func (h hostCfg) resolve(cfg config) pollSettings {
 }
 
 func loadConfig() config {
-	const filename = "halo-scraper.toml"
+	const filename = "xemu-cartographer.toml"
 
 	// Pre-populate defaults — TOML decode only overwrites keys present in the file,
 	// so omitted keys keep these values. This also fixes the bool zero-value footgun

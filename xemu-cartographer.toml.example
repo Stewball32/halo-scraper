@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────
-#  halo-scraper configuration
-#  Copy this file to halo-scraper.toml and edit it.
-#  Place halo-scraper.toml next to the scraper binary (or in the working directory).
+#  xemu-cartographer configuration
+#  Copy this file to xemu-cartographer.toml and edit it.
+#  Place xemu-cartographer.toml next to the scraper binary (or in the working directory).
 # ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────

@@ -59,13 +59,13 @@
 </script>
 
 <svelte:head>
-	<title>Halo Scraper — Game</title>
+	<title>Xemu Cartographer — Game</title>
 </svelte:head>
 
 <div class="flex h-full flex-col overflow-hidden">
 	<!-- Header bar -->
 	<div class="flex shrink-0 items-center gap-2 border-b border-border bg-[#0a0a14] px-2 py-1">
-		<span class="text-xs font-bold uppercase tracking-wider text-hgold">Halo Scraper</span>
+		<span class="text-xs font-bold uppercase tracking-wider text-hgold">Xemu Cartographer</span>
 		<span class="text-[11px] {getConnected() ? 'text-hgreen' : 'text-hred'}">
 			{getConnected() ? '● connected' : '○ disconnected'}
 		</span>

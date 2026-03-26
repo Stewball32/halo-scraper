@@ -22,8 +22,8 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"halo-scraper/internal/halo"
-	"halo-scraper/internal/xemu"
+	"xemu-cartographer/internal/halo"
+	"xemu-cartographer/internal/xemu"
 )
 
 const (

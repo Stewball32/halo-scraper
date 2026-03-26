@@ -1,4 +1,4 @@
-# halo-scraper
+# xemu-cartographer
 
 A per-tick memory scraper for Halo CE running inside [xemu](https://xemu.app/) (original Xbox emulator) on Linux. Reads live game state directly from xemu's process memory via `/proc/<pid>/mem`, broadcasts it over WebSocket at 30 Hz, and optionally persists match events to [PocketBase](https://pocketbase.io/).
 
@@ -19,19 +19,19 @@ A per-tick memory scraper for Halo CE running inside [xemu](https://xemu.app/) (
 
 ```bash
 # Clone
-git clone https://github.com/yourname/halo-scraper
-cd halo-scraper
+git clone https://github.com/Stewball32/xemu-cartographer
+cd xemu-cartographer
 
 # Configure
-cp halo-scraper.toml.example halo-scraper.toml
-$EDITOR halo-scraper.toml   # set qmp_sock path(s) for your xemu instance(s)
+cp xemu-cartographer.toml.example xemu-cartographer.toml
+$EDITOR xemu-cartographer.toml   # set qmp_sock path(s) for your xemu instance(s)
 
 # Run (root required for /proc/<pid>/mem)
-sudo go run ./cmd/scraper
+sudo go run ./cmd/cartographer
 
 # Or build first
-go build -o scraper ./cmd/scraper
-sudo ./scraper
+go build -o cartographer ./cmd/cartographer
+sudo ./cartographer
 ```
 
 Open `web/debug/index.html` directly in your browser to see a live feed of all WebSocket messages.
@@ -42,7 +42,7 @@ For detailed xemu setup (QMP socket, Podman containers, systemd service), see [d
 
 ## Configuration
 
-Copy `halo-scraper.toml.example` to `halo-scraper.toml`. The scraper looks for the config file next to its binary, then in the working directory.
+Copy `xemu-cartographer.toml.example` to `xemu-cartographer.toml`. The scraper looks for the config file next to its binary, then in the working directory.
 
 | Section | Key | Default | Description |
 |---|---|---|---|
@@ -74,8 +74,8 @@ Failed hosts are skipped at startup; remaining instances continue normally.
 ## Architecture
 
 ```
-halo-scraper/
-├── cmd/scraper/        # Entry point: config loading, instance orchestration, poll loop
+xemu-cartographer/
+├── cmd/cartographer/   # Entry point: config loading, instance orchestration, poll loop
 ├── internal/xemu/      # PID discovery, /proc/mem lifecycle, QMP translation, pread wrappers
 ├── internal/halo/      # All game knowledge: offsets, types, state readers, event detection
 ├── internal/ws/        # WebSocket hub — multi-client broadcast, snapshot caching
@@ -91,7 +91,7 @@ halo-scraper/
 | `internal/halo/` | All game knowledge: offsets, type definitions, state readers, event detection |
 | `internal/ws/` | WebSocket hub — multi-client broadcast, snapshot caching for new connections |
 | `internal/pb/` | PocketBase REST client — background drain goroutine, non-blocking |
-| `cmd/scraper/` | Config loading, instance orchestration, poll loop |
+| `cmd/cartographer/` | Config loading, instance orchestration, poll loop |
 
 ### Memory access model
 
@@ -158,7 +158,7 @@ Open `web/debug/index.html` directly in your browser (no server needed). It conn
 ## Building
 
 ```bash
-go build ./cmd/scraper          # build scraper binary
-go test ./...                   # run all tests
-go test ./internal/halo/...     # run halo package tests only
+go build ./cmd/cartographer        # build cartographer binary
+go test ./...                      # run all tests
+go test ./internal/halo/...        # run halo package tests only
 ```

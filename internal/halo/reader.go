@@ -5,7 +5,7 @@ import (
 	"math"
 	"unicode/utf16"
 
-	"halo-scraper/internal/xemu"
+	"xemu-cartographer/internal/xemu"
 )
 
 // Reader reads Halo CE game state from a single xemu instance.

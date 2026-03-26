@@ -1,6 +1,6 @@
 # PocketBase Setup
 
-PocketBase is optional. Set `enabled = false` in `halo-scraper.toml` if you don't need persistent stat storage.
+PocketBase is optional. Set `enabled = false` in `xemu-cartographer.toml` if you don't need persistent stat storage.
 
 ---
 

@@ -1,7 +1,7 @@
 # Compiled binaries
 /localproof
-/scraper
-/cmd/scraper/scraper
+/cartographer
+/cmd/cartographer/cartographer
 /cmd/prove/prove
 /cmd/localproof/localproof
 
@@ -11,7 +11,7 @@
 coverage.html
 
 # Local config (machine-specific socket paths)
-halo-scraper.toml
+xemu-cartographer.toml
 
 # Claude Code instructions and local settings (not for general contributors)
 CLAUDE.md

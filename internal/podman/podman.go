@@ -13,7 +13,7 @@ import (
 )
 
 // Config holds settings for the podman Manager, typically decoded from the
-// [containers] section of halo-scraper.toml.
+// [containers] section of xemu-cartographer.toml.
 type Config struct {
 	Enabled    bool   `toml:"enabled"`
 	SocketDir  string `toml:"socket_dir"`
