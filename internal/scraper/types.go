@@ -1,4 +1,4 @@
-package halo
+package scraper
 
 import "encoding/json"
 
@@ -11,21 +11,6 @@ const (
 	GameStateInGame   GameState = "in_game"
 	GameStatePostGame GameState = "postgame"
 )
-
-// GametypeNames maps gametype IDs to human-readable strings.
-var GametypeNames = map[uint32]string{
-	0:  "none",
-	1:  "ctf",
-	2:  "slayer",
-	3:  "oddball",
-	4:  "king",
-	5:  "race",
-	6:  "terminator",
-	7:  "stub",
-	12: "all",
-	13: "all_except_ctf",
-	14: "all_except_ctf_race",
-}
 
 // Event type constants.
 const (
@@ -73,13 +58,13 @@ func MakeEnvelope(msgType, instance string, tick uint32, payload any) Envelope {
 
 // SnapshotPayload is sent on connect and on every game-state transition.
 type SnapshotPayload struct {
-	GameState       GameState       `json:"game_state"`
-	Map             string          `json:"map"`
-	Gametype        string          `json:"gametype"`
-	IsTeamGame      bool            `json:"is_team_game"`
-	ScoreLimit      int32           `json:"score_limit"`
-	TimeLimitTicks  int32           `json:"time_limit_ticks"`
-	TeamScores      []TeamScore     `json:"team_scores"`
+	GameState       GameState        `json:"game_state"`
+	Map             string           `json:"map"`
+	Gametype        string           `json:"gametype"`
+	IsTeamGame      bool             `json:"is_team_game"`
+	ScoreLimit      int32            `json:"score_limit"`
+	TimeLimitTicks  int32            `json:"time_limit_ticks"`
+	TeamScores      []TeamScore      `json:"team_scores"`
 	Players         []SnapshotPlayer `json:"players"`
 	PowerItemSpawns []PowerItemSpawn `json:"power_item_spawns"`
 }
@@ -131,37 +116,37 @@ type TickPayload struct {
 
 // TickPlayer is the full per-player dynamic state for one tick.
 type TickPlayer struct {
-	Index             int          `json:"index"`
-	Alive             bool         `json:"alive"`
-	RespawnInTicks    *uint32      `json:"respawn_in_ticks"`
-	X                 float32      `json:"x"`
-	Y                 float32      `json:"y"`
-	Z                 float32      `json:"z"`
-	VX                float32      `json:"vx"`
-	VY                float32      `json:"vy"`
-	VZ                float32      `json:"vz"`
-	AimX              float32      `json:"aim_x"`
-	AimY              float32      `json:"aim_y"`
-	AimZ              float32      `json:"aim_z"`
-	ZoomLevel         int8         `json:"zoom_level"`
-	CrouchScale       float32      `json:"crouchscale"`
-	Health            float32      `json:"health"`
-	Shields           float32      `json:"shields"`
-	HasCamo           bool         `json:"has_camo"`
-	HasOvershield     bool         `json:"has_overshield"`
-	Frags             uint8        `json:"frags"`
-	Plasmas           uint8        `json:"plasmas"`
-	SelectedWeaponSlot int16       `json:"selected_weapon_slot"`
-	IsCrouching       bool         `json:"is_crouching"`
-	IsJumping         bool         `json:"is_jumping"`
-	IsFiring          bool         `json:"is_firing"`
-	IsShooting        bool         `json:"is_shooting"`
-	IsFlashlightOn    bool         `json:"is_flashlight_on"`
-	IsThrowingGrenade bool         `json:"is_throwing_grenade"`
-	IsMeleeing        bool         `json:"is_meleeing"`
-	IsPressingAction  bool         `json:"is_pressing_action"`
-	IsHoldingAction   bool         `json:"is_holding_action"`
-	Weapons           []WeaponInfo `json:"weapons"`
+	Index              int          `json:"index"`
+	Alive              bool         `json:"alive"`
+	RespawnInTicks     *uint32      `json:"respawn_in_ticks"`
+	X                  float32      `json:"x"`
+	Y                  float32      `json:"y"`
+	Z                  float32      `json:"z"`
+	VX                 float32      `json:"vx"`
+	VY                 float32      `json:"vy"`
+	VZ                 float32      `json:"vz"`
+	AimX               float32      `json:"aim_x"`
+	AimY               float32      `json:"aim_y"`
+	AimZ               float32      `json:"aim_z"`
+	ZoomLevel          int8         `json:"zoom_level"`
+	CrouchScale        float32      `json:"crouchscale"`
+	Health             float32      `json:"health"`
+	Shields            float32      `json:"shields"`
+	HasCamo            bool         `json:"has_camo"`
+	HasOvershield      bool         `json:"has_overshield"`
+	Frags              uint8        `json:"frags"`
+	Plasmas            uint8        `json:"plasmas"`
+	SelectedWeaponSlot int16        `json:"selected_weapon_slot"`
+	IsCrouching        bool         `json:"is_crouching"`
+	IsJumping          bool         `json:"is_jumping"`
+	IsFiring           bool         `json:"is_firing"`
+	IsShooting         bool         `json:"is_shooting"`
+	IsFlashlightOn     bool         `json:"is_flashlight_on"`
+	IsThrowingGrenade  bool         `json:"is_throwing_grenade"`
+	IsMeleeing         bool         `json:"is_meleeing"`
+	IsPressingAction   bool         `json:"is_pressing_action"`
+	IsHoldingAction    bool         `json:"is_holding_action"`
+	Weapons            []WeaponInfo `json:"weapons"`
 }
 
 // WeaponInfo is one weapon slot in a player's inventory.
@@ -194,6 +179,9 @@ type XYZ struct {
 // -------------------------------------------------------------------
 // Internal (non-broadcast) types
 // -------------------------------------------------------------------
+
+// DamageTableSlots is the number of damage table entries per biped.
+const DamageTableSlots = 4
 
 // InternalPlayerState holds per-player data needed for event detection.
 // It is read alongside TickPlayer but not broadcast.

@@ -1,5 +1,5 @@
-// scraper initialises all xemu instances and polls each one for Halo CE game
-// state. Run as root (needs /proc/<pid>/mem read access):
+// scraper initialises all xemu instances, auto-detects the running game, and
+// polls each one for game state. Run as root (needs /proc/<pid>/mem read access):
 //
 //	sudo go run ./cmd/cartographer
 package main
@@ -21,11 +21,15 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"xemu-cartographer/internal/discovery"
-	"xemu-cartographer/internal/halo"
 	"xemu-cartographer/internal/pb"
 	"xemu-cartographer/internal/podman"
+	"xemu-cartographer/internal/scraper"
 	"xemu-cartographer/internal/ws"
 	"xemu-cartographer/internal/xemu"
+
+	// Register game scrapers.
+	_ "xemu-cartographer/internal/scraper/halo2"
+	_ "xemu-cartographer/internal/scraper/haloce"
 )
 
 // ---------------------------------------------------------------------------
@@ -430,28 +434,56 @@ func main() {
 // Per-host lifecycle
 // ---------------------------------------------------------------------------
 
-// connect tries to initialise inst every 2 seconds until ctx is cancelled or
-// 10 seconds elapse.
-func connect(ctx context.Context, host hostCfg) (*xemu.Instance, error) {
+// connect tries to initialise an xemu instance and auto-detect the running game.
+// It performs a two-phase init: first translating the XBE header address for game
+// detection, then re-initialising with the game-specific addresses.
+func connect(ctx context.Context, host hostCfg) (*xemu.Instance, scraper.GameReader, error) {
 	deadline := time.Now().Add(10 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 		inst := &xemu.Instance{Name: host.Name, QMPSock: host.QMPSock}
-		if err := inst.Init(halo.AllLowGVAs); err == nil {
-			return inst, nil
-		} else {
+
+		// Phase 1: translate detection GVAs and identify the game.
+		if err := inst.Init(scraper.DetectionGVAs()); err != nil {
 			lastErr = err
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
 		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(2 * time.Second):
+		gameReader, titleID, err := scraper.Detect(inst, host.Name)
+		inst.Close()
+		if err != nil {
+			lastErr = err
+			log.Printf("%s: game detection failed (title ID 0x%08X): %v", host.Name, titleID, err)
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
 		}
+		log.Printf("%s: detected game (title ID 0x%08X)", host.Name, titleID)
+
+		// Phase 2: re-init with the game-specific low GVAs.
+		if err := inst.Init(gameReader.LowGVAs()); err != nil {
+			lastErr = err
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+
+		return inst, gameReader, nil
 	}
-	return nil, lastErr
+	return nil, nil, lastErr
 }
 
 // runHost supervises one xemu instance: connects on startup, polls while alive,
@@ -472,7 +504,7 @@ func runHost(
 	tryConnect := func() {
 		tracker.setStatus(host.Name, "connecting", "")
 		log.Printf("%s: initialising...", host.Name)
-		inst, err := connect(ctx, host)
+		inst, gameReader, err := connect(ctx, host)
 		if err != nil {
 			log.Printf("%s: init failed: %v", host.Name, err)
 			tracker.setStatus(host.Name, "offline", err.Error())
@@ -482,9 +514,8 @@ func runHost(
 		hub.RegisterInstance(host.Name)
 		tracker.setStatus(host.Name, "online", "")
 
-		reader := halo.NewReader(inst, host.Name)
-		state := halo.NewTickState()
-		poll(ctx, reader, host.Name, hub, pbClient, state, settings)
+		state := gameReader.NewTickState()
+		poll(ctx, gameReader, host.Name, hub, pbClient, state, settings)
 
 		// poll returned — instance is dead or context cancelled.
 		hub.UnregisterInstance(host.Name)
@@ -531,17 +562,17 @@ func runHost(
 
 func poll(
 	ctx context.Context,
-	reader *halo.Reader,
+	reader scraper.GameReader,
 	name string,
 	hub *ws.Hub,
 	pbClient *pb.Client,
-	state *halo.TickState,
+	state *scraper.TickState,
 	settings pollSettings,
 ) {
 	var (
 		prevTick          uint32
-		prevState         halo.GameState
-		cachedSpawns      []halo.PowerItemSpawn
+		prevState         scraper.GameState
+		cachedSpawns      []scraper.PowerItemSpawn
 		spawnsLoaded      bool
 		lastTickBroadcast time.Time
 		errCount          int
@@ -568,7 +599,7 @@ func poll(
 		errCount = 0
 
 		// Slow poll when not actively in game.
-		if gameState != halo.GameStateInGame {
+		if gameState != scraper.GameStateInGame {
 			if gameState != prevState {
 				handleStateTransition(name, tick, gameState, prevState, reader, hub, pbClient, state)
 				prevState = gameState
@@ -587,12 +618,12 @@ func poll(
 		prevTick = tick
 
 		// First tick in game state: send snapshot + game_start event.
-		if prevState != halo.GameStateInGame {
+		if prevState != scraper.GameStateInGame {
 			snap, err := reader.ReadSnapshot()
 			if err != nil {
 				log.Printf("%s: snapshot error: %v", name, err)
 			} else {
-				snap.GameState = halo.GameStateInGame
+				snap.GameState = scraper.GameStateInGame
 				cachedSpawns = snap.PowerItemSpawns
 				spawnsLoaded = true
 
@@ -603,15 +634,15 @@ func poll(
 				broadcastSnapshot(name, tick, snap, hub, pbClient)
 
 				// Emit game_start event.
-				startEvt := halo.MakeEnvelope("event", name, tick, map[string]any{
-					"event_type":  halo.EventGameStart,
+				startEvt := scraper.MakeEnvelope("event", name, tick, map[string]any{
+					"event_type":  scraper.EventGameStart,
 					"map":         snap.Map,
 					"gametype":    snap.Gametype,
 					"score_limit": snap.ScoreLimit,
 				})
 				broadcastEnvelope(startEvt, hub, pbClient)
 			}
-			prevState = halo.GameStateInGame
+			prevState = scraper.GameStateInGame
 		}
 
 		if !spawnsLoaded {
@@ -632,7 +663,7 @@ func poll(
 
 		// Broadcast tick message, throttled to tick_hz.
 		if time.Since(lastTickBroadcast) >= settings.tickInterval {
-			tickEnv := halo.MakeEnvelope("tick", name, tick, tickResult.Payload)
+			tickEnv := scraper.MakeEnvelope("tick", name, tick, tickResult.Payload)
 			if msg, err := json.Marshal(tickEnv); err == nil {
 				hub.Broadcast(name, msg)
 			}
@@ -642,10 +673,10 @@ func poll(
 		// Detect and broadcast events (skipped if events = false).
 		if settings.events {
 			snap, _ := reader.ReadSnapshot()
-			snap.GameState = halo.GameStateInGame
+			snap.GameState = scraper.GameStateInGame
 			snap.PowerItemSpawns = cachedSpawns
 
-			events := halo.DetectEvents(tick, name, snap, tickResult, state)
+			events := reader.DetectEvents(tick, name, snap, tickResult, state)
 			for _, evt := range events {
 				broadcastEnvelope(evt, hub, pbClient)
 			}
@@ -663,12 +694,12 @@ func poll(
 func handleStateTransition(
 	name string,
 	tick uint32,
-	newState halo.GameState,
-	prevState halo.GameState,
-	reader *halo.Reader,
+	newState scraper.GameState,
+	prevState scraper.GameState,
+	reader scraper.GameReader,
 	hub *ws.Hub,
 	pbClient *pb.Client,
-	state *halo.TickState,
+	state *scraper.TickState,
 ) {
 	snap, err := reader.ReadSnapshot()
 	if err != nil {
@@ -680,7 +711,7 @@ func handleStateTransition(
 	log.Printf("%s: state → %s (tick %d)", name, newState, tick)
 
 	// game_end: post-game transition from in-game.
-	if newState == halo.GameStatePostGame && prevState == halo.GameStateInGame {
+	if newState == scraper.GameStatePostGame && prevState == scraper.GameStateInGame {
 		teamScores := snap.TeamScores
 		scores := make([]map[string]any, 0, len(snap.Players))
 		for _, p := range snap.Players {
@@ -698,22 +729,22 @@ func handleStateTransition(
 			})
 		}
 		endPayload := map[string]any{
-			"event_type":  halo.EventGameEnd,
+			"event_type":  scraper.EventGameEnd,
 			"team_scores": teamScores,
 			"scores":      scores,
 		}
-		endEvt := halo.MakeEnvelope("event", name, tick, endPayload)
+		endEvt := scraper.MakeEnvelope("event", name, tick, endPayload)
 		broadcastEnvelope(endEvt, hub, pbClient)
 
 		// Reset inter-tick state for next game.
-		*state = *halo.NewTickState()
+		*state = *scraper.NewTickState()
 	}
 
 	broadcastSnapshot(name, tick, snap, hub, pbClient)
 }
 
-func broadcastSnapshot(name string, tick uint32, snap halo.SnapshotPayload, hub *ws.Hub, pbClient *pb.Client) {
-	env := halo.MakeEnvelope("snapshot", name, tick, snap)
+func broadcastSnapshot(name string, tick uint32, snap scraper.SnapshotPayload, hub *ws.Hub, pbClient *pb.Client) {
+	env := scraper.MakeEnvelope("snapshot", name, tick, snap)
 	msg, err := json.Marshal(env)
 	if err != nil {
 		log.Printf("%s: marshal snapshot: %v", name, err)
@@ -725,7 +756,7 @@ func broadcastSnapshot(name string, tick uint32, snap halo.SnapshotPayload, hub 
 	}
 }
 
-func broadcastEnvelope(env halo.Envelope, hub *ws.Hub, pbClient *pb.Client) {
+func broadcastEnvelope(env scraper.Envelope, hub *ws.Hub, pbClient *pb.Client) {
 	msg, err := json.Marshal(env)
 	if err != nil {
 		return

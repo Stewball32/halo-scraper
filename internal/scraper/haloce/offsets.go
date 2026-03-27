@@ -1,4 +1,4 @@
-package halo
+package haloce
 
 // All addresses are Halo CE guest virtual addresses (GVAs).
 

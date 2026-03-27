@@ -1,4 +1,4 @@
-package halo
+package scraper
 
 // PowerItemTracker tracks the live status of one power item spawn across ticks.
 type PowerItemTracker struct {
@@ -22,14 +22,14 @@ type TickState struct {
 	PrevQuit       map[int]uint8
 
 	// Dynamic player data from previous tick.
-	PrevAlive         map[int]bool
-	PrevHealth        map[int]float32
-	PrevShields       map[int]float32
-	PrevFrags         map[int]uint8
-	PrevPlasmas       map[int]uint8
-	PrevHasCamo       map[int]bool
-	PrevHasOvershield map[int]bool
-	PrevParentObject  map[int]uint32 // vehicle handle (0xFFFFFFFF = on foot)
+	PrevAlive          map[int]bool
+	PrevHealth         map[int]float32
+	PrevShields        map[int]float32
+	PrevFrags          map[int]uint8
+	PrevPlasmas        map[int]uint8
+	PrevHasCamo        map[int]bool
+	PrevHasOvershield  map[int]bool
+	PrevParentObject   map[int]uint32 // vehicle handle (0xFFFFFFFF = on foot)
 	PrevMeleeRemaining map[int]uint8
 
 	// Previous weapon slots (objectID = handle & 0xFFFF; 0xFFFF = empty).
@@ -57,25 +57,25 @@ type TickState struct {
 // NewTickState initialises a TickState with all maps allocated.
 func NewTickState() *TickState {
 	return &TickState{
-		PrevKills:          make(map[int]int16),
-		PrevDeaths:         make(map[int]int16),
-		PrevAssists:        make(map[int]int16),
-		PrevTeamKills:      make(map[int]int16),
-		PrevSuicides:       make(map[int]int16),
-		PrevKillStreak:     make(map[int]uint16),
-		PrevMultikill:      make(map[int]uint16),
-		PrevQuit:           make(map[int]uint8),
-		PrevAlive:          make(map[int]bool),
-		PrevHealth:         make(map[int]float32),
-		PrevShields:        make(map[int]float32),
-		PrevFrags:          make(map[int]uint8),
-		PrevPlasmas:        make(map[int]uint8),
-		PrevHasCamo:        make(map[int]bool),
-		PrevHasOvershield:  make(map[int]bool),
-		PrevParentObject:   make(map[int]uint32),
-		PrevMeleeRemaining: make(map[int]uint8),
-		PrevWeaponSlots:    make(map[int][4]uint32),
-		PowerItems:         make(map[int]*PowerItemTracker),
+		PrevKills:           make(map[int]int16),
+		PrevDeaths:          make(map[int]int16),
+		PrevAssists:         make(map[int]int16),
+		PrevTeamKills:       make(map[int]int16),
+		PrevSuicides:        make(map[int]int16),
+		PrevKillStreak:      make(map[int]uint16),
+		PrevMultikill:       make(map[int]uint16),
+		PrevQuit:            make(map[int]uint8),
+		PrevAlive:           make(map[int]bool),
+		PrevHealth:          make(map[int]float32),
+		PrevShields:         make(map[int]float32),
+		PrevFrags:           make(map[int]uint8),
+		PrevPlasmas:         make(map[int]uint8),
+		PrevHasCamo:         make(map[int]bool),
+		PrevHasOvershield:   make(map[int]bool),
+		PrevParentObject:    make(map[int]uint32),
+		PrevMeleeRemaining:  make(map[int]uint8),
+		PrevWeaponSlots:     make(map[int][4]uint32),
+		PowerItems:          make(map[int]*PowerItemTracker),
 		PrevPowerItemStatus: make(map[int]string),
 		PrevPowerItemHeldBy: make(map[int]int),
 		PrevWeaponAmmo:      make(map[int]int16),

@@ -1,4 +1,4 @@
-// WebSocket envelope — matches internal/halo/game.go:Envelope
+// WebSocket envelope — matches internal/scraper/types.go:Envelope
 export interface Envelope {
 	type: 'snapshot' | 'tick' | 'event';
 	instance: string;
