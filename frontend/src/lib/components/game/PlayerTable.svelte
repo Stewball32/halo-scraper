@@ -17,7 +17,7 @@
 	} = $props();
 
 	let filtered = $derived(
-		teamFilter !== null ? players.filter((p) => p.team === teamFilter) : players
+		teamFilter !== null ? (players ?? []).filter((p) => p.team === teamFilter) : (players ?? [])
 	);
 
 	let showCtf = $derived(gametype.toLowerCase().includes('ctf'));
