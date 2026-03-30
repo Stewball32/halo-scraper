@@ -18,14 +18,6 @@
 	--font-mono: 'JetBrains Mono', 'Fira Mono', 'Consolas', monospace;
 }
 
-@font-face {
-	font-family: 'JetBrains Mono';
-	font-style: normal;
-	font-weight: 100 800;
-	font-display: swap;
-	src: url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
-}
-
 html,
 body {
 	height: 100%;
