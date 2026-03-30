@@ -25,6 +25,7 @@ type Config struct {
 	PortBase   int    `toml:"port_base"`
 	PortStride int    `toml:"port_stride"`
 	StateFile  string `toml:"state_file"`
+	HostIP     string `toml:"host_ip"` // IP/hostname for remote access; defaults to "localhost"
 
 	// Defaults for container environment variables.
 	Encoder          string `toml:"encoder"`
@@ -208,6 +209,16 @@ func (m *Manager) createBrowser(name string, ports Ports, browserCfgDir string) 
 	if height == 0 {
 		height = 720
 	}
+	hostIP := m.cfg.HostIP
+	if hostIP == "" {
+		hostIP = "localhost"
+	}
+
+	// Build the insecure-fallback list: always include localhost, add hostIP if different.
+	certFallbackHosts := "localhost"
+	if hostIP != "localhost" {
+		certFallbackHosts = "localhost," + hostIP
+	}
 
 	args := []string{
 		"create",
@@ -219,11 +230,11 @@ func (m *Manager) createBrowser(name string, ports Ports, browserCfgDir string) 
 		// Environment
 		"-e", fmt.Sprintf("WEB_LISTENING_PORT=%d", ports.BrowserWeb),
 		"-e", fmt.Sprintf("VNC_LISTENING_PORT=%d", ports.BrowserVNC),
-		"-e", fmt.Sprintf("FF_OPEN_URL=https://localhost:%d", ports.XemuHTTPS),
+		"-e", fmt.Sprintf("FF_OPEN_URL=https://%s:%d", hostIP, ports.XemuHTTPS),
 		"-e", "FF_KIOSK=1",
 		"-e", "FF_CUSTOM_ARGS=",
 		"-e", "FF_PREF_AUTOPLAY=media.autoplay.default=0",
-		"-e", `FF_PREF_CERT=security.tls.insecure_fallback_hosts="localhost"`,
+		"-e", fmt.Sprintf(`FF_PREF_CERT=security.tls.insecure_fallback_hosts="%s"`, certFallbackHosts),
 		"-e", fmt.Sprintf("DISPLAY_WIDTH=%d", width),
 		"-e", fmt.Sprintf("DISPLAY_HEIGHT=%d", height),
 		"-e", "KEEP_APP_RUNNING=1",
