@@ -9,6 +9,11 @@ import (
 // DetectEvents combines stat-diff detection with the Halo 2 game event buffer
 // to produce events. The event buffer provides kill events with weapon info;
 // stat-diff detection catches deaths, score changes, and streaks.
+//
+// NOTE: The event buffer is currently NON-FUNCTIONAL — GVAEventCount always
+// reads 0 despite kills occurring. All kill/death detection relies on the
+// stat-diff path below. Weapon attribution is unavailable until the event
+// buffer offsets are verified or an alternative source is found.
 func (r *Reader) DetectEvents(tick uint32, instance string, snap scraper.SnapshotPayload, result scraper.TickResult, state *scraper.TickState) []scraper.Envelope {
 	var events []scraper.Envelope
 	emit := func(payload any) {

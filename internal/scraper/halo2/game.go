@@ -9,6 +9,7 @@ import (
 const TitleID uint32 = 0x4D530064
 
 // GametypeNames maps Halo 2 gametype IDs to human-readable strings.
+// Only slayer (2) has been verified in xemu; others are from HaloCaster.
 var GametypeNames = map[uint8]string{
 	0: "none",
 	1: "ctf",
@@ -21,6 +22,7 @@ var GametypeNames = map[uint8]string{
 }
 
 // DamageReportingNames maps the Halo 2 DamageReportingType enum to weapon/damage names.
+// UNVERIFIED — from HaloCaster. Event buffer is non-functional so these are untested.
 var DamageReportingNames = map[uint8]string{
 	0:  "guardians",
 	1:  "fall damage",
@@ -65,6 +67,7 @@ var DamageReportingNames = map[uint8]string{
 }
 
 // mapDisplayNames converts internal scenario names to display names.
+// Only "lockout" has been verified in xemu; others are from community sources.
 var mapDisplayNames = map[string]string{
 	"beavercreek":    "Beaver Creek",
 	"burial_mounds":  "Burial Mounds",
