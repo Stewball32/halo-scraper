@@ -88,21 +88,25 @@ func DetectionGVAs() []uint32 {
 // matching GameReader. Returns an error if the title ID is unrecognised.
 func Detect(inst *xemu.Instance, instanceName string) (GameReader, uint32, error) {
 	// Read the certificate pointer from the XBE header.
-	certPtrHVA, err := inst.LowHVA(xbeHeaderGVA)
+	headerHVA, err := inst.LowHVA(xbeHeaderGVA)
 	if err != nil {
 		return nil, 0, fmt.Errorf("detect: translate XBE header: %w", err)
 	}
-	// The certificate pointer is at header + 0x0118.
-	certPtr, err := inst.Mem.ReadU32At(certPtrHVA + int64(xbeOffCertPtr))
+	certPtr, err := inst.Mem.ReadU32At(headerHVA + int64(xbeOffCertPtr))
 	if err != nil {
 		return nil, 0, fmt.Errorf("detect: read certificate pointer: %w", err)
 	}
+
+	// Compute host VA for the certificate. Low GVAs are relative to
+	// the already-translated header page; high GVAs use the standard offset.
+	var certHVA int64
 	if certPtr < 0x80000000 {
-		return nil, 0, fmt.Errorf("detect: certificate pointer 0x%08X is not a high GVA", certPtr)
+		certHVA = headerHVA + int64(certPtr) - int64(xbeHeaderGVA)
+	} else {
+		certHVA = inst.Mem.HighGVA(certPtr)
 	}
 
-	// Read the title ID from the certificate (high GVA, no translation needed).
-	titleID, err := inst.Mem.ReadU32(certPtr + xbeCertOffTitleID)
+	titleID, err := inst.Mem.ReadU32At(certHVA + int64(xbeCertOffTitleID))
 	if err != nil {
 		return nil, 0, fmt.Errorf("detect: read title ID: %w", err)
 	}
