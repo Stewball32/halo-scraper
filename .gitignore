@@ -1,9 +1,11 @@
 # Compiled binaries
 /localproof
 /cartographer
+/memscan
 /cmd/cartographer/cartographer
 /cmd/prove/prove
 /cmd/localproof/localproof
+/cmd/memscan/memscan
 
 # Go test and coverage artifacts
 *.test
