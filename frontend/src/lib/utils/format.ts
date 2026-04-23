@@ -13,6 +13,7 @@ export function sinceStr(isoStr: string): string {
 }
 
 const WEAPON_SHORT: Record<string, string> = {
+	// Halo CE
 	'assault rifle': 'AR',
 	pistol: 'Pistol',
 	'sniper rifle': 'Sniper',
@@ -23,7 +24,35 @@ const WEAPON_SHORT: Record<string, string> = {
 	needler: 'Needler',
 	flamethrower: 'Flamer',
 	'fuel rod gun': 'Fuel Rod',
-	'energy sword': 'Sword'
+	'energy sword': 'Sword',
+	// Halo 2
+	magnum: 'Magnum',
+	smg: 'SMG',
+	'battle rifle': 'BR',
+	carbine: 'Carbine',
+	'beam rifle': 'Beam',
+	'fuel rod': 'Fuel Rod',
+	'brute shot': 'Brute Shot',
+	'brute plasma rifle': 'Brute P.R.',
+	turret: 'Turret',
+	'turret plasma': 'P.Turret',
+	banshee: 'Banshee',
+	ghost: 'Ghost',
+	mongoose: 'Mongoose',
+	scorpion: 'Scorpion',
+	spectre: 'Spectre',
+	warthog: 'Warthog',
+	wraith: 'Wraith',
+	tank: 'Tank',
+	'sentinel beam': 'S.Beam',
+	melee: 'Melee',
+	guardians: 'Guardians',
+	'fall damage': 'Fall',
+	'frag grenade': 'Frag',
+	'plasma grenade': 'Plasma',
+	'flag melee': 'Flag',
+	'bomb melee': 'Bomb',
+	'oddball melee': 'Oddball'
 };
 
 export function shortWeapon(tag: string): string {

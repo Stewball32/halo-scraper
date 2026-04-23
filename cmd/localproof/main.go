@@ -22,7 +22,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"xemu-cartographer/internal/halo"
+	"xemu-cartographer/internal/scraper/haloce"
 	"xemu-cartographer/internal/xemu"
 )
 
@@ -54,8 +54,8 @@ type playerMeta struct {
 }
 
 func main() {
-	gvas := make([]uint32, len(halo.AllLowGVAs), len(halo.AllLowGVAs)+2)
-	copy(gvas, halo.AllLowGVAs)
+	gvas := make([]uint32, len(haloce.AllLowGVAs), len(haloce.AllLowGVAs)+2)
+	copy(gvas, haloce.AllLowGVAs)
 	gvas = append(gvas, addrUpdateQueuePtr, addrPlayerControlPtr)
 
 	inst := &xemu.Instance{Name: instName, QMPSock: qmpSock}
@@ -67,17 +67,17 @@ func main() {
 	mem := inst.Mem
 
 	// --- Static layout (read once) ---
-	pdaBase, _ := inst.DerefLowPtr(halo.AddrPlayerDatumArrayPtr)
-	elemSize, _ := mem.ReadU16(pdaBase + halo.OffPDAElementSize)
-	currentCount, _ := mem.ReadU16(pdaBase + halo.OffPDACurrentCount)
-	firstElement, _ := mem.ReadU32(pdaBase + halo.OffPDAFirstElement)
+	pdaBase, _ := inst.DerefLowPtr(haloce.AddrPlayerDatumArrayPtr)
+	elemSize, _ := mem.ReadU16(pdaBase + haloce.OffPDAElementSize)
+	currentCount, _ := mem.ReadU16(pdaBase + haloce.OffPDACurrentCount)
+	firstElement, _ := mem.ReadU32(pdaBase + haloce.OffPDAFirstElement)
 
-	ohdBase, _ := inst.DerefLowPtr(halo.AddrObjectHeaderDatumPtr)
+	ohdBase, _ := inst.DerefLowPtr(haloce.AddrObjectHeaderDatumPtr)
 	var objElemSize uint16
 	var objHeaderFirst uint32
 	if ohdBase >= 0x80000000 {
-		objElemSize, _ = mem.ReadU16(ohdBase + halo.OffOHDElementSize)
-		objHeaderFirst, _ = mem.ReadU32(ohdBase + halo.OffOHDFirstElement)
+		objElemSize, _ = mem.ReadU16(ohdBase + haloce.OffOHDElementSize)
+		objHeaderFirst, _ = mem.ReadU32(ohdBase + haloce.OffOHDFirstElement)
 	}
 
 	uqBase, _ := inst.DerefLowPtr(addrUpdateQueuePtr)
@@ -87,11 +87,11 @@ func main() {
 	meta := make(map[uint16]playerMeta)
 	for i := uint16(0); i < currentCount; i++ {
 		playerBase := firstElement + uint32(i)*uint32(elemSize)
-		nb, err := mem.ReadBytes(playerBase+halo.OffPlrName, 24)
+		nb, err := mem.ReadBytes(playerBase+haloce.OffPlrName, 24)
 		if err != nil || (nb[0] == 0 && nb[1] == 0) {
 			continue
 		}
-		li, _ := mem.ReadS16(playerBase + halo.OffPlrLocalIndex)
+		li, _ := mem.ReadS16(playerBase + haloce.OffPlrLocalIndex)
 		meta[i] = playerMeta{name: decodeUTF16LE(nb), localIndex: li}
 	}
 
@@ -124,7 +124,7 @@ func main() {
 	for time.Now().Before(deadline) {
 		// Re-read object header first_element every tick (table rearranges).
 		if ohdBase >= 0x80000000 {
-			objHeaderFirst, _ = mem.ReadU32(ohdBase + halo.OffOHDFirstElement)
+			objHeaderFirst, _ = mem.ReadU32(ohdBase + haloce.OffOHDFirstElement)
 		}
 
 		changed := false
@@ -133,13 +133,13 @@ func main() {
 				continue
 			}
 			playerBase := firstElement + uint32(i)*uint32(elemSize)
-			handle, _ := mem.ReadS32(playerBase + halo.OffPlrObjectHandle)
+			handle, _ := mem.ReadS32(playerBase + haloce.OffPlrObjectHandle)
 			alive := handle != -1
 
 			var bFwd, bLeft, bAimX float32
 			if alive && objHeaderFirst >= 0x80000000 && objElemSize > 0 {
 				objIdx := uint32(handle) & 0xFFFF
-				objDataAddr, _ := mem.ReadU32(objHeaderFirst + objIdx*uint32(objElemSize) + halo.OffObjEntryDataAddr)
+				objDataAddr, _ := mem.ReadU32(objHeaderFirst + objIdx*uint32(objElemSize) + haloce.OffObjEntryDataAddr)
 				if objDataAddr >= 0x80000000 {
 					bFwd, _ = mem.ReadF32(objDataAddr + 0x228)
 					bLeft, _ = mem.ReadF32(objDataAddr + 0x22C)

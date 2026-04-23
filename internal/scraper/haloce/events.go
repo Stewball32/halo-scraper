@@ -1,14 +1,18 @@
-package halo
+package haloce
 
-import "encoding/json"
+import (
+	"encoding/json"
 
-// DetectEvents compares the current TickResult against TickState and returns all
-// events that fired this tick. It also updates TickState for the next comparison.
-func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result TickResult, state *TickState) []Envelope {
-	var events []Envelope
+	"xemu-cartographer/internal/scraper"
+)
+
+// DetectEvents compares the current scraper.TickResult against scraper.TickState and returns all
+// events that fired this tick. It also updates scraper.TickState for the next comparison.
+func DetectEvents(tick uint32, instance string, snap scraper.SnapshotPayload, result scraper.TickResult, state *scraper.TickState) []scraper.Envelope {
+	var events []scraper.Envelope
 	emit := func(eventType string, payload any) {
 		b, _ := json.Marshal(payload)
-		events = append(events, Envelope{
+		events = append(events, scraper.Envelope{
 			Type:     "event",
 			Instance: instance,
 			Tick:     tick,
@@ -18,7 +22,7 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 	}
 
 	// Build player lookup maps from snapshot (for team info) and tick (for index).
-	snapshotByIdx := make(map[int]SnapshotPlayer, len(snap.Players))
+	snapshotByIdx := make(map[int]scraper.SnapshotPlayer, len(snap.Players))
 	for _, p := range snap.Players {
 		snapshotByIdx[p.Index] = p
 	}
@@ -35,15 +39,15 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 		// --- player_quit ---
 		if prev, ok := state.PrevQuit[idx]; ok {
 			if prev == 0 && ip.QuitFlag == 1 {
-				emit(EventPlayerQuit, map[string]any{"event_type": EventPlayerQuit, "player": idx})
+				emit(scraper.EventPlayerQuit, map[string]any{"event_type": scraper.EventPlayerQuit, "player": idx})
 			}
 		}
 
 		// --- death ---
 		prevAlive := state.PrevAlive[idx]
 		if prevAlive && !tp.Alive {
-			emit(EventDeath, map[string]any{
-				"event_type":      EventDeath,
+			emit(scraper.EventDeath, map[string]any{
+				"event_type":      scraper.EventDeath,
 				"player":          idx,
 				"respawn_in_ticks": ip.RespawnTimer,
 			})
@@ -66,20 +70,20 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 			}
 
 			if killerIdx >= 0 {
-				emit(EventKill, map[string]any{"event_type": EventKill, "killer": killerIdx, "victim": idx})
+				emit(scraper.EventKill, map[string]any{"event_type": scraper.EventKill, "killer": killerIdx, "victim": idx})
 
 				// --- team_kill ---
 				killerSnap, killerOk := snapshotByIdx[killerIdx]
 				victimSnap, victimOk := snapshotByIdx[idx]
 				if killerOk && victimOk && snap.IsTeamGame && killerSnap.Team == victimSnap.Team {
-					emit(EventTeamKill, map[string]any{"event_type": EventTeamKill, "killer": killerIdx, "victim": idx})
+					emit(scraper.EventTeamKill, map[string]any{"event_type": scraper.EventTeamKill, "killer": killerIdx, "victim": idx})
 				}
 
 				// --- score ---
 				killerIP := findInternal(result.InternalPlayers, killerIdx)
 				if killerIP != nil {
-					emit(EventScore, map[string]any{
-						"event_type": EventScore,
+					emit(scraper.EventScore, map[string]any{
+						"event_type": scraper.EventScore,
 						"player":     killerIdx,
 						"kills":      killerIP.Kills,
 						"deaths":     killerIP.Deaths,
@@ -91,8 +95,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 					// --- multikill ---
 					prevMK := state.PrevMultikill[killerIdx]
 					if killerIP.Multikill > prevMK && killerIP.Multikill > 1 {
-						emit(EventMultikill, map[string]any{
-							"event_type": EventMultikill,
+						emit(scraper.EventMultikill, map[string]any{
+							"event_type": scraper.EventMultikill,
 							"player":     killerIdx,
 							"count":      killerIP.Multikill,
 						})
@@ -101,8 +105,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 					// --- kill_streak ---
 					prevKS := state.PrevKillStreak[killerIdx]
 					if killerIP.KillStreak > prevKS {
-						emit(EventKillStreak, map[string]any{
-							"event_type": EventKillStreak,
+						emit(scraper.EventKillStreak, map[string]any{
+							"event_type": scraper.EventKillStreak,
 							"player":     killerIdx,
 							"count":      killerIP.KillStreak,
 						})
@@ -113,8 +117,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 
 		// --- spawn ---
 		if !prevAlive && tp.Alive {
-			emit(EventSpawn, map[string]any{
-				"event_type": EventSpawn,
+			emit(scraper.EventSpawn, map[string]any{
+				"event_type": scraper.EventSpawn,
 				"player":     idx,
 				"x":          tp.X,
 				"y":          tp.Y,
@@ -129,14 +133,14 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 			// Find dealer from damage table.
 			dealerIdx := findRecentDealerInDamageTable(ip, tick)
 			payload := map[string]any{
-				"event_type": EventDamage,
+				"event_type": scraper.EventDamage,
 				"receiver":   idx,
 				"amount":     prevHP - currHP,
 			}
 			if dealerIdx >= 0 {
 				payload["dealer"] = dealerIdx
 			}
-			emit(EventDamage, payload)
+			emit(scraper.EventDamage, payload)
 		}
 
 		// --- melee ---
@@ -147,19 +151,19 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 			if ip.MeleeRemaining != prevMeleeRem {
 				// Find victim: another player whose damage table shows dealer = idx this tick.
 				victimIdx := findMeleeVictim(idx, result.InternalPlayers, tick)
-				payload := map[string]any{"event_type": EventMelee, "player": idx}
+				payload := map[string]any{"event_type": scraper.EventMelee, "player": idx}
 				if victimIdx >= 0 {
 					payload["victim"] = victimIdx
 				}
-				emit(EventMelee, payload)
+				emit(scraper.EventMelee, payload)
 			}
 		}
 
 		// --- grenade_thrown ---
 		prevFrags := state.PrevFrags[idx]
 		if tp.Alive && tp.Frags < prevFrags {
-			emit(EventGrenadeThrown, map[string]any{
-				"event_type":      EventGrenadeThrown,
+			emit(scraper.EventGrenadeThrown, map[string]any{
+				"event_type":      scraper.EventGrenadeThrown,
 				"player":          idx,
 				"kind":            "frag",
 				"frags_remaining": tp.Frags,
@@ -167,8 +171,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 		}
 		prevPlasmas := state.PrevPlasmas[idx]
 		if tp.Alive && tp.Plasmas < prevPlasmas {
-			emit(EventGrenadeThrown, map[string]any{
-				"event_type":        EventGrenadeThrown,
+			emit(scraper.EventGrenadeThrown, map[string]any{
+				"event_type":        scraper.EventGrenadeThrown,
 				"player":            idx,
 				"kind":              "plasma",
 				"plasmas_remaining": tp.Plasmas,
@@ -178,30 +182,30 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 		// --- powerup_picked_up / powerup_expired ---
 		prevCamo := state.PrevHasCamo[idx]
 		if !prevCamo && tp.HasCamo {
-			emit(EventPowerupPickup, map[string]any{
-				"event_type": EventPowerupPickup,
+			emit(scraper.EventPowerupPickup, map[string]any{
+				"event_type": scraper.EventPowerupPickup,
 				"player":     idx,
 				"kind":       "active_camouflage",
 			})
 		}
 		if prevCamo && !tp.HasCamo && tp.Alive {
-			emit(EventPowerupExpired, map[string]any{
-				"event_type": EventPowerupExpired,
+			emit(scraper.EventPowerupExpired, map[string]any{
+				"event_type": scraper.EventPowerupExpired,
 				"player":     idx,
 				"kind":       "active_camouflage",
 			})
 		}
 		prevOS := state.PrevHasOvershield[idx]
 		if !prevOS && tp.HasOvershield {
-			emit(EventPowerupPickup, map[string]any{
-				"event_type": EventPowerupPickup,
+			emit(scraper.EventPowerupPickup, map[string]any{
+				"event_type": scraper.EventPowerupPickup,
 				"player":     idx,
 				"kind":       "overshield",
 			})
 		}
 		if prevOS && !tp.HasOvershield && tp.Alive {
-			emit(EventPowerupExpired, map[string]any{
-				"event_type": EventPowerupExpired,
+			emit(scraper.EventPowerupExpired, map[string]any{
+				"event_type": scraper.EventPowerupExpired,
 				"player":     idx,
 				"kind":       "overshield",
 			})
@@ -212,15 +216,15 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 		// ParentObject, causing false enter/exit events on death and respawn ticks.
 		prevParent := state.PrevParentObject[idx]
 		if prevAlive && tp.Alive && prevParent == 0xFFFFFFFF && ip.ParentObject != 0xFFFFFFFF {
-			emit(EventVehicleEntered, map[string]any{
-				"event_type":     EventVehicleEntered,
+			emit(scraper.EventVehicleEntered, map[string]any{
+				"event_type":     scraper.EventVehicleEntered,
 				"player":         idx,
 				"vehicle_handle": ip.ParentObject & 0xFFFF,
 			})
 		}
 		if prevAlive && tp.Alive && prevParent != 0xFFFFFFFF && ip.ParentObject == 0xFFFFFFFF {
-			emit(EventVehicleExited, map[string]any{
-				"event_type": EventVehicleExited,
+			emit(scraper.EventVehicleExited, map[string]any{
+				"event_type": scraper.EventVehicleExited,
 				"player":     idx,
 			})
 		}
@@ -235,8 +239,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 					cur = *w.Charge
 				}
 				if prev > 0.01 && cur <= 0.01 {
-					emit(EventItemDepleted, map[string]any{
-						"event_type": EventItemDepleted,
+					emit(scraper.EventItemDepleted, map[string]any{
+						"event_type": scraper.EventItemDepleted,
 						"player":     idx,
 						"tag":        w.Tag,
 						"kind":       "energy",
@@ -245,8 +249,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 			} else if w.AmmoMag != nil && w.AmmoPack != nil {
 				prevAmmo := state.PrevWeaponAmmo[key]
 				if prevAmmo > 0 && *w.AmmoMag == 0 && *w.AmmoPack == 0 {
-					emit(EventItemDepleted, map[string]any{
-						"event_type": EventItemDepleted,
+					emit(scraper.EventItemDepleted, map[string]any{
+						"event_type": scraper.EventItemDepleted,
 						"player":     idx,
 						"tag":        w.Tag,
 						"kind":       "ammo",
@@ -259,7 +263,7 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 	// -------------------------------------------------------------------
 	// Power item events (compare current status to previous)
 	// -------------------------------------------------------------------
-	spawnMap := make(map[int]PowerItemSpawn, len(snap.PowerItemSpawns))
+	spawnMap := make(map[int]scraper.PowerItemSpawn, len(snap.PowerItemSpawns))
 	for _, s := range snap.PowerItemSpawns {
 		spawnMap[s.SpawnID] = s
 	}
@@ -273,8 +277,8 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 
 		// item_picked_up: world → held
 		if prevStatus == "world" && pi.Status == "held" && pi.HeldBy != nil {
-			emit(EventItemPickedUp, map[string]any{
-				"event_type": EventItemPickedUp,
+			emit(scraper.EventItemPickedUp, map[string]any{
+				"event_type": scraper.EventItemPickedUp,
 				"spawn_id":   pi.SpawnID,
 				"player":     *pi.HeldBy,
 				"tag":        spawn.Tag,
@@ -285,7 +289,7 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 		if prevStatus == "held" && pi.Status == "world" {
 			prevHolder := state.PrevPowerItemHeldBy[pi.SpawnID]
 			payload := map[string]any{
-				"event_type": EventItemDropped,
+				"event_type": scraper.EventItemDropped,
 				"spawn_id":   pi.SpawnID,
 				"tag":        spawn.Tag,
 			}
@@ -297,13 +301,13 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 				payload["y"] = pi.WorldPos.Y
 				payload["z"] = pi.WorldPos.Z
 			}
-			emit(EventItemDropped, payload)
+			emit(scraper.EventItemDropped, payload)
 		}
 
 		// item_spawned: respawning → world
 		if prevStatus == "respawning" && pi.Status == "world" {
-			emit(EventItemSpawned, map[string]any{
-				"event_type": EventItemSpawned,
+			emit(scraper.EventItemSpawned, map[string]any{
+				"event_type": scraper.EventItemSpawned,
 				"spawn_id":   pi.SpawnID,
 				"tag":        spawn.Tag,
 			})
@@ -311,15 +315,15 @@ func DetectEvents(tick uint32, instance string, snap SnapshotPayload, result Tic
 	}
 
 	// -------------------------------------------------------------------
-	// Update TickState
+	// Update scraper.TickState
 	// -------------------------------------------------------------------
 	UpdateTickState(state, result)
 
 	return events
 }
 
-// UpdateTickState copies current tick values into TickState for the next comparison.
-func UpdateTickState(state *TickState, result TickResult) {
+// UpdateTickState copies current tick values into scraper.TickState for the next comparison.
+func UpdateTickState(state *scraper.TickState, result scraper.TickResult) {
 	for _, tp := range result.Payload.Players {
 		state.PrevAlive[tp.Index] = tp.Alive
 		state.PrevHealth[tp.Index] = tp.Health
@@ -368,16 +372,16 @@ func UpdateTickState(state *TickState, result TickResult) {
 // Helpers
 // -------------------------------------------------------------------
 
-func findTickPlayer(players []TickPlayer, index int) TickPlayer {
+func findTickPlayer(players []scraper.TickPlayer, index int) scraper.TickPlayer {
 	for _, p := range players {
 		if p.Index == index {
 			return p
 		}
 	}
-	return TickPlayer{Index: index}
+	return scraper.TickPlayer{Index: index}
 }
 
-func findInternal(players []InternalPlayerState, index int) *InternalPlayerState {
+func findInternal(players []scraper.InternalPlayerState, index int) *scraper.InternalPlayerState {
 	for i := range players {
 		if players[i].Index == index {
 			return &players[i]
@@ -388,7 +392,7 @@ func findInternal(players []InternalPlayerState, index int) *InternalPlayerState
 
 // findKillerInDamageTable finds which player dealt the killing blow by scanning
 // the victim's damage table for the most recent entry near the current tick.
-func findKillerInDamageTable(ip InternalPlayerState, tick uint32) int {
+func findKillerInDamageTable(ip scraper.InternalPlayerState, tick uint32) int {
 	best := uint32(0)
 	killerIdx := -1
 	for _, e := range ip.DamageTable {
@@ -407,7 +411,7 @@ func findKillerInDamageTable(ip InternalPlayerState, tick uint32) int {
 }
 
 // findRecentDealerInDamageTable finds the most recent dealer for a damage event.
-func findRecentDealerInDamageTable(ip InternalPlayerState, tick uint32) int {
+func findRecentDealerInDamageTable(ip scraper.InternalPlayerState, tick uint32) int {
 	best := uint32(0)
 	dealerIdx := -1
 	for _, e := range ip.DamageTable {
@@ -425,7 +429,7 @@ func findRecentDealerInDamageTable(ip InternalPlayerState, tick uint32) int {
 }
 
 // findMeleeVictim finds which player was hit by player dealerIdx's melee this tick.
-func findMeleeVictim(dealerIdx int, players []InternalPlayerState, tick uint32) int {
+func findMeleeVictim(dealerIdx int, players []scraper.InternalPlayerState, tick uint32) int {
 	for _, p := range players {
 		if p.Index == dealerIdx {
 			continue

@@ -7,6 +7,8 @@
 
 	let { children } = $props();
 
+	let isOverlay = $derived($page.url.pathname.startsWith(`${base}/overlays`));
+
 	onMount(() => {
 		connect();
 		return () => disconnect();
@@ -24,6 +26,9 @@
 	}
 </script>
 
+{#if isOverlay}
+	{@render children()}
+{:else}
 <div class="flex h-full flex-col md:flex-row">
 	<!-- Desktop sidebar -->
 	<nav
@@ -90,3 +95,4 @@
 		></div>
 	</nav>
 </div>
+{/if}

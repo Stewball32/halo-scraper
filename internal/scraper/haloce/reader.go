@@ -1,10 +1,11 @@
-package halo
+package haloce
 
 import (
 	"encoding/binary"
 	"math"
 	"unicode/utf16"
 
+	"xemu-cartographer/internal/scraper"
 	"xemu-cartographer/internal/xemu"
 )
 
@@ -32,28 +33,28 @@ func NewReader(inst *xemu.Instance, instanceName string) *Reader {
 // -------------------------------------------------------------------
 
 // ReadGameState reads the minimum needed to determine game state and current tick.
-func (r *Reader) ReadGameState() (state GameState, tick uint32, err error) {
+func (r *Reader) ReadGameState() (state scraper.GameState, tick uint32, err error) {
 	inst := r.inst
 	mem := inst.Mem
 
 	geGlobalsPtr, err := inst.DerefLowPtr(AddrGameEngineGlobalsPtr)
 	if err != nil {
-		return GameStateMenu, 0, err
+		return scraper.GameStateMenu, 0, err
 	}
 	gameEngineRunning := geGlobalsPtr != 0
 
 	mainMenuHVA, err := inst.LowHVA(AddrMainMenuActive)
 	if err != nil {
-		return GameStateMenu, 0, err
+		return scraper.GameStateMenu, 0, err
 	}
 	mainMenu, err := mem.ReadU8At(mainMenuHVA)
 	if err != nil {
-		return GameStateMenu, 0, err
+		return scraper.GameStateMenu, 0, err
 	}
 
 	gtgPtr, err := inst.DerefLowPtr(AddrGameTimeGlobalsPtr)
 	if err != nil {
-		return GameStateMenu, 0, err
+		return scraper.GameStateMenu, 0, err
 	}
 
 	var initialized, active, paused uint8
@@ -66,7 +67,7 @@ func (r *Reader) ReadGameState() (state GameState, tick uint32, err error) {
 
 	gameCanScoreHVA, err := inst.LowHVA(AddrGameCanScore)
 	if err != nil {
-		return GameStateMenu, tick, err
+		return scraper.GameStateMenu, tick, err
 	}
 	gameCanScore, _ := mem.ReadU32At(gameCanScoreHVA)
 
@@ -74,20 +75,20 @@ func (r *Reader) ReadGameState() (state GameState, tick uint32, err error) {
 	return state, tick, nil
 }
 
-func determineGameState(mainMenu, initialized, active, paused uint8, engineRunning bool, gameCanScore uint32) GameState {
+func determineGameState(mainMenu, initialized, active, paused uint8, engineRunning bool, gameCanScore uint32) scraper.GameState {
 	if mainMenu != 0 || initialized == 0 {
-		return GameStateMenu
+		return scraper.GameStateMenu
 	}
 	if initialized == 1 && active == 0 && paused == 1 {
-		return GameStatePreGame
+		return scraper.GameStatePreGame
 	}
 	if initialized == 1 && active == 1 && paused == 0 {
 		if engineRunning && gameCanScore != 0 {
-			return GameStatePostGame
+			return scraper.GameStatePostGame
 		}
-		return GameStateInGame
+		return scraper.GameStateInGame
 	}
-	return GameStateMenu
+	return scraper.GameStateMenu
 }
 
 // -------------------------------------------------------------------
@@ -95,7 +96,7 @@ func determineGameState(mainMenu, initialized, active, paused uint8, engineRunni
 // -------------------------------------------------------------------
 
 // ReadSnapshot reads the full static game state.
-func (r *Reader) ReadSnapshot() (SnapshotPayload, error) {
+func (r *Reader) ReadSnapshot() (scraper.SnapshotPayload, error) {
 	inst := r.inst
 	mem := inst.Mem
 
@@ -114,11 +115,11 @@ func (r *Reader) ReadSnapshot() (SnapshotPayload, error) {
 	}
 
 	scoreLimit, _ := r.readScoreLimit(gametypeID)
-	teamScores, _ := r.readTeamScores(gametypeID, isTeamGame)
+	teamScores, _ := r.readTeamScores(isTeamGame)
 	players, _ := r.readSnapshotPlayers()
 	spawns, _ := r.readPowerItemSpawns()
 
-	return SnapshotPayload{
+	return scraper.SnapshotPayload{
 		Map:             mapName,
 		Gametype:        gametypeName,
 		IsTeamGame:      isTeamGame,
@@ -130,12 +131,19 @@ func (r *Reader) ReadSnapshot() (SnapshotPayload, error) {
 	}, nil
 }
 
+// readGametypeID returns the current gametype ID. No authoritative direct
+// address has been verified on the Xbox build — AddrGameEngineGlobalsPtr
+// dereferences to a low GVA we can't translate, and AddrVariant holds a
+// per-gametype variant preset index, not the gametype itself. For now we
+// fall back to the variant byte; callers that need scoring should not rely
+// on this value (readTeamScores uses isTeamGame directly).
 func (r *Reader) readGametypeID() (uint32, error) {
-	gePtr, err := r.inst.DerefLowPtr(AddrGameEngineGlobalsPtr)
-	if err != nil || gePtr < 0x80000000 {
+	variantHVA, err := r.inst.LowHVA(AddrVariant)
+	if err != nil {
 		return 0, err
 	}
-	return r.inst.Mem.ReadU32(gePtr + OffGEGGametype)
+	v, err := r.inst.Mem.ReadU8At(variantHVA)
+	return uint32(v), err
 }
 
 func (r *Reader) readScoreLimit(gametypeID uint32) (int32, error) {
@@ -158,24 +166,17 @@ func (r *Reader) readScoreLimit(gametypeID uint32) (int32, error) {
 	return int32(v), err
 }
 
-func (r *Reader) readTeamScores(gametypeID uint32, isTeamGame bool) ([]TeamScore, error) {
+// readTeamScores returns the per-team scores for team games. Only the Slayer
+// base (AddrScoreSlayer, u32[2]=red,blue) is verified on the Xbox build; the
+// other game-type bases in offsets.go come from the Gearbox PC port docs and
+// haven't been confirmed in-memory yet. Since gametype detection is still
+// unresolved (see readGametypeID), we default to the Slayer base for any
+// team game — correct for Team Slayer, the most common team mode.
+func (r *Reader) readTeamScores(isTeamGame bool) ([]scraper.TeamScore, error) {
 	if !isTeamGame {
 		return nil, nil
 	}
-	var addrLow uint32
-	switch gametypeID {
-	case 1:
-		addrLow = AddrScoreCTF
-	case 2:
-		addrLow = AddrScoreSlayer
-	case 3:
-		addrLow = AddrScoreOddball
-	case 4:
-		addrLow = AddrScoreKing
-	default:
-		return nil, nil
-	}
-	hva, err := r.inst.LowHVA(addrLow)
+	hva, err := r.inst.LowHVA(AddrScoreSlayer)
 	if err != nil {
 		return nil, err
 	}
@@ -187,13 +188,13 @@ func (r *Reader) readTeamScores(gametypeID uint32, isTeamGame bool) ([]TeamScore
 	if err != nil {
 		return nil, err
 	}
-	return []TeamScore{
+	return []scraper.TeamScore{
 		{Team: 0, Score: int32(red)},
 		{Team: 1, Score: int32(blue)},
 	}, nil
 }
 
-func (r *Reader) readSnapshotPlayers() ([]SnapshotPlayer, error) {
+func (r *Reader) readSnapshotPlayers() ([]scraper.SnapshotPlayer, error) {
 	inst := r.inst
 	mem := inst.Mem
 
@@ -208,7 +209,7 @@ func (r *Reader) readSnapshotPlayers() ([]SnapshotPlayer, error) {
 		return nil, nil
 	}
 
-	players := make([]SnapshotPlayer, 0, currentCount)
+	players := make([]scraper.SnapshotPlayer, 0, currentCount)
 	for i := uint16(0); i < currentCount; i++ {
 		base := firstElement + uint32(i)*uint32(elemSize)
 		p, ok, err := r.readSnapshotPlayer(int(i), base)
@@ -220,15 +221,15 @@ func (r *Reader) readSnapshotPlayers() ([]SnapshotPlayer, error) {
 	return players, nil
 }
 
-func (r *Reader) readSnapshotPlayer(index int, base uint32) (SnapshotPlayer, bool, error) {
+func (r *Reader) readSnapshotPlayer(index int, base uint32) (scraper.SnapshotPlayer, bool, error) {
 	mem := r.inst.Mem
 
 	nameBytes, err := mem.ReadBytes(base+OffPlrName, 24)
 	if err != nil {
-		return SnapshotPlayer{}, false, err
+		return scraper.SnapshotPlayer{}, false, err
 	}
 	if nameBytes[0] == 0 && nameBytes[1] == 0 {
-		return SnapshotPlayer{}, false, nil
+		return scraper.SnapshotPlayer{}, false, nil
 	}
 
 	team, _ := mem.ReadU32(base + OffPlrTeam)
@@ -242,8 +243,16 @@ func (r *Reader) readSnapshotPlayer(index int, base uint32) (SnapshotPlayer, boo
 	mkRaw, _ := mem.ReadU16(base + OffPlrMultikill)
 	sfRaw, _ := mem.ReadS32(base + OffPlrShotsFired)
 	shRaw, _ := mem.ReadS16(base + OffPlrShotsHit)
+	li, _ := mem.ReadS16(base + OffPlrLocalIndex)
 
-	return SnapshotPlayer{
+	isLocal := li >= 0
+	var localIdx *int
+	if isLocal {
+		v := int(li)
+		localIdx = &v
+	}
+
+	return scraper.SnapshotPlayer{
 		Index:      index,
 		Name:       decodeUTF16LE(nameBytes),
 		Team:       team,
@@ -257,6 +266,8 @@ func (r *Reader) readSnapshotPlayer(index int, base uint32) (SnapshotPlayer, boo
 		Multikill:  mkRaw,
 		ShotsFired: sfRaw,
 		ShotsHit:   shRaw,
+		IsLocal:    &isLocal,
+		LocalIndex: localIdx,
 	}, true, nil
 }
 
@@ -265,13 +276,13 @@ func (r *Reader) readSnapshotPlayer(index int, base uint32) (SnapshotPlayer, boo
 // -------------------------------------------------------------------
 
 // ReadTick reads all 30Hz dynamic state for one tick.
-func (r *Reader) ReadTick(spawns []PowerItemSpawn, state *TickState) (TickResult, error) {
+func (r *Reader) ReadTick(spawns []scraper.PowerItemSpawn, state *scraper.TickState) (scraper.TickResult, error) {
 	inst := r.inst
 	mem := inst.Mem
 
 	// Ensure cached bases are populated.
 	if err := r.ensureBases(); err != nil {
-		return TickResult{}, err
+		return scraper.TickResult{}, err
 	}
 
 	// Re-read object header first_element_address every tick (table rearranges every ~30s).
@@ -287,17 +298,17 @@ func (r *Reader) ReadTick(spawns []PowerItemSpawn, state *TickState) (TickResult
 	// Read player datum array.
 	pdaBase, err := inst.DerefLowPtr(AddrPlayerDatumArrayPtr)
 	if err != nil || pdaBase < 0x80000000 {
-		return TickResult{}, err
+		return scraper.TickResult{}, err
 	}
 	elemSize, _ := mem.ReadU16(pdaBase + OffPDAElementSize)
 	currentCount, _ := mem.ReadU16(pdaBase + OffPDACurrentCount)
 	firstElement, _ := mem.ReadU32(pdaBase + OffPDAFirstElement)
 	if firstElement < 0x80000000 || elemSize == 0 {
-		return TickResult{}, nil
+		return scraper.TickResult{}, nil
 	}
 
-	tickPlayers := make([]TickPlayer, 0, currentCount)
-	internalPlayers := make([]InternalPlayerState, 0, currentCount)
+	tickPlayers := make([]scraper.TickPlayer, 0, currentCount)
+	internalPlayers := make([]scraper.InternalPlayerState, 0, currentCount)
 
 	for i := uint16(0); i < currentCount; i++ {
 		playerBase := firstElement + uint32(i)*uint32(elemSize)
@@ -322,8 +333,8 @@ func (r *Reader) ReadTick(spawns []PowerItemSpawn, state *TickState) (TickResult
 
 	powerItems := r.readPowerItemStatus(spawns, state, playerSlots, objHeaderFirst, objElemSize, objAllocCount)
 
-	result := TickResult{
-		Payload: TickPayload{
+	result := scraper.TickResult{
+		Payload: scraper.TickPayload{
 			Players:    tickPlayers,
 			PowerItems: powerItems,
 		},
@@ -337,20 +348,20 @@ func (r *Reader) readTickPlayer(
 	playerBase uint32,
 	objHeaderFirst uint32,
 	objElemSize uint16,
-) (TickPlayer, InternalPlayerState, bool, error) {
+) (scraper.TickPlayer, scraper.InternalPlayerState, bool, error) {
 	mem := r.inst.Mem
 
 	// Active slot check: name's first UTF-16 char must be non-zero.
 	nameBytes, err := mem.ReadBytes(playerBase+OffPlrName, 2)
 	if err != nil {
-		return TickPlayer{}, InternalPlayerState{}, false, err
+		return scraper.TickPlayer{}, scraper.InternalPlayerState{}, false, err
 	}
 	if nameBytes[0] == 0 && nameBytes[1] == 0 {
-		return TickPlayer{}, InternalPlayerState{}, false, nil
+		return scraper.TickPlayer{}, scraper.InternalPlayerState{}, false, nil
 	}
 
 	// Static fields.
-	ip := InternalPlayerState{Index: index}
+	ip := scraper.InternalPlayerState{Index: index}
 	ip.Kills, _ = mem.ReadS16(playerBase + OffPlrKills)
 	ip.Deaths, _ = mem.ReadS16(playerBase + OffPlrDeaths)
 	ip.Assists, _ = mem.ReadS16(playerBase + OffPlrAssists)
@@ -372,7 +383,7 @@ func (r *Reader) readTickPlayer(
 
 	alive := handle != -1
 
-	tp := TickPlayer{
+	tp := scraper.TickPlayer{
 		Index: index,
 		Alive: alive,
 	}
@@ -411,7 +422,7 @@ func (r *Reader) readTickPlayer(
 	return tp, ip, true, nil
 }
 
-func (r *Reader) readDynPlayerFull(tp *TickPlayer, ip *InternalPlayerState, objDataAddr uint32) {
+func (r *Reader) readDynPlayerFull(tp *scraper.TickPlayer, ip *scraper.InternalPlayerState, objDataAddr uint32) {
 	mem := r.inst.Mem
 
 	tp.X, _ = mem.ReadF32(objDataAddr + OffDynX)
@@ -477,28 +488,28 @@ func (r *Reader) readDynPlayerFull(tp *TickPlayer, ip *InternalPlayerState, objD
 	}
 }
 
-func (r *Reader) readWeaponInfo(slot int, handle uint32) (WeaponInfo, bool, error) {
+func (r *Reader) readWeaponInfo(slot int, handle uint32) (scraper.WeaponInfo, bool, error) {
 	if handle == 0xFFFFFFFF || r.ohdBase < 0x80000000 {
-		return WeaponInfo{}, false, nil
+		return scraper.WeaponInfo{}, false, nil
 	}
 	mem := r.inst.Mem
 
 	objElemSize, _ := mem.ReadU16(r.ohdBase + OffOHDElementSize)
 	objHeaderFirst, _ := mem.ReadU32(r.ohdBase + OffOHDFirstElement)
 	if objHeaderFirst < 0x80000000 || objElemSize == 0 {
-		return WeaponInfo{}, false, nil
+		return scraper.WeaponInfo{}, false, nil
 	}
 
 	objIdx := handle & 0xFFFF
 	entryAddr := objHeaderFirst + objIdx*uint32(objElemSize)
 	objDataAddr, _ := mem.ReadU32(entryAddr + OffObjEntryDataAddr)
 	if objDataAddr < 0x80000000 {
-		return WeaponInfo{}, false, nil
+		return scraper.WeaponInfo{}, false, nil
 	}
 
 	flags, _ := mem.ReadU32(objDataAddr + OffObjFlags)
 	if flags&ObjFlagGarbage != 0 {
-		return WeaponInfo{}, false, nil
+		return scraper.WeaponInfo{}, false, nil
 	}
 
 	tagIdx, _ := mem.ReadS16(objDataAddr + OffObjTagIndex)
@@ -514,7 +525,7 @@ func (r *Reader) readWeaponInfo(slot int, handle uint32) (WeaponInfo, bool, erro
 		}
 	}
 
-	wi := WeaponInfo{
+	wi := scraper.WeaponInfo{
 		Slot:     slot,
 		ObjectID: handle & 0xFFFF,
 		Tag:      tagName,
@@ -534,17 +545,17 @@ func (r *Reader) readWeaponInfo(slot int, handle uint32) (WeaponInfo, bool, erro
 	return wi, true, nil
 }
 
-func (r *Reader) readDamageTable(objDataAddr uint32) [DamageTableSlots]DamageEntry {
+func (r *Reader) readDamageTable(objDataAddr uint32) [scraper.DamageTableSlots]scraper.DamageEntry {
 	mem := r.inst.Mem
-	var table [DamageTableSlots]DamageEntry
+	var table [scraper.DamageTableSlots]scraper.DamageEntry
 	base := objDataAddr + OffDynDamageTable
-	for i := 0; i < DamageTableSlots; i++ {
+	for i := 0; i < scraper.DamageTableSlots; i++ {
 		off := base + uint32(i)*DamageEntrySize
 		t, _ := mem.ReadU32(off + OffDmgTime)
 		a, _ := mem.ReadF32(off + OffDmgAmount)
 		doh, _ := mem.ReadU32(off + OffDmgDealerObjHdl)
 		dph, _ := mem.ReadU32(off + OffDmgDealerPlrHdl)
-		table[i] = DamageEntry{DamageTime: t, Amount: a, DealerObjHandle: doh, DealerPlrHandle: dph}
+		table[i] = scraper.DamageEntry{DamageTime: t, Amount: a, DealerObjHandle: doh, DealerPlrHandle: dph}
 	}
 	return table
 }
@@ -554,13 +565,13 @@ func (r *Reader) readDamageTable(objDataAddr uint32) [DamageTableSlots]DamageEnt
 // -------------------------------------------------------------------
 
 func (r *Reader) readPowerItemStatus(
-	spawns []PowerItemSpawn,
-	state *TickState,
+	spawns []scraper.PowerItemSpawn,
+	state *scraper.TickState,
 	playerSlots map[uint32]int, // objectID → player index
 	objHeaderFirst uint32,
 	objElemSize uint16,
 	objAllocCount uint16,
-) []PowerItemStatus {
+) []scraper.PowerItemStatus {
 	if len(spawns) == 0 {
 		return nil
 	}
@@ -597,16 +608,16 @@ func (r *Reader) readPowerItemStatus(
 		}
 	}
 
-	result := make([]PowerItemStatus, len(spawns))
+	result := make([]scraper.PowerItemStatus, len(spawns))
 	for idx, spawn := range spawns {
 		tracker, ok := state.PowerItems[spawn.SpawnID]
 		if !ok {
 			// Tracker not initialised — create one.
-			tracker = &PowerItemTracker{CurrentObjectID: 0xFFFF, Status: "respawning", HeldBy: -1}
+			tracker = &scraper.PowerItemTracker{CurrentObjectID: 0xFFFF, Status: "respawning", HeldBy: -1}
 			state.PowerItems[spawn.SpawnID] = tracker
 		}
 
-		status := PowerItemStatus{SpawnID: spawn.SpawnID}
+		status := scraper.PowerItemStatus{SpawnID: spawn.SpawnID}
 
 		// Check if tracked object is in a player's weapon slot.
 		if tracker.CurrentObjectID != 0xFFFF {
@@ -649,7 +660,7 @@ func (r *Reader) readPowerItemStatus(
 			}
 			tracker.Status = "world"
 			tracker.HeldBy = -1
-			pos := &XYZ{X: best.x, Y: best.y, Z: best.z}
+			pos := &scraper.XYZ{X: best.x, Y: best.y, Z: best.z}
 			status.Status = "world"
 			status.WorldPos = pos
 			result[idx] = status
@@ -681,7 +692,7 @@ func (r *Reader) readPowerItemStatus(
 // Power item spawns (read once at game start)
 // -------------------------------------------------------------------
 
-func (r *Reader) readPowerItemSpawns() ([]PowerItemSpawn, error) {
+func (r *Reader) readPowerItemSpawns() ([]scraper.PowerItemSpawn, error) {
 	inst := r.inst
 	mem := inst.Mem
 
@@ -738,7 +749,7 @@ func (r *Reader) readPowerItemSpawns() ([]PowerItemSpawn, error) {
 		}
 	}
 
-	var spawns []PowerItemSpawn
+	var spawns []scraper.PowerItemSpawn
 	for i := int32(0); i < itemCount; i++ {
 		itemAddr := firstItemAddr + uint32(i)*ScenarioItemStride
 		tagIdxRaw, _ := mem.ReadS32(itemAddr + OffScenItemTagIndex)
@@ -773,7 +784,7 @@ func (r *Reader) readPowerItemSpawns() ([]PowerItemSpawn, error) {
 			}
 		}
 
-		spawns = append(spawns, PowerItemSpawn{
+		spawns = append(spawns, scraper.PowerItemSpawn{
 			SpawnID:            len(spawns),
 			Tag:                tagName,
 			SpawnIntervalTicks: interval,

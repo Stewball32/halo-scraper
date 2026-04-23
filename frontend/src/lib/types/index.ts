@@ -1,4 +1,4 @@
-// WebSocket envelope — matches internal/halo/game.go:Envelope
+// WebSocket envelope — matches internal/scraper/types.go:Envelope
 export interface Envelope {
 	type: 'snapshot' | 'tick' | 'event';
 	instance: string;
@@ -36,6 +36,8 @@ export interface SnapshotPlayer {
 	multikill: number;
 	shots_fired: number;
 	shots_hit: number;
+	is_local?: boolean | null;
+	local_index?: number | null;
 }
 
 export interface TeamScore {
@@ -138,6 +140,7 @@ export interface HostStatus {
 	state: 'online' | 'connecting' | 'offline';
 	since: string;
 	error: string;
+	xbox_name?: string;
 }
 
 export interface StatusResponse {
