@@ -33,6 +33,10 @@ type GameReader interface {
 
 	// NewTickState returns a fresh tick state tracker.
 	NewTickState() *TickState
+
+	// XboxName returns the console name of the xbox running this game, or ""
+	// when the plugin can't resolve it (e.g. Halo 2 has no known offset).
+	XboxName() string
 }
 
 // ---------------------------------------------------------------------------

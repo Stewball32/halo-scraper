@@ -25,7 +25,9 @@ var GametypeNames = map[uint32]string{
 
 // Game implements scraper.GameReader for Halo CE.
 type Game struct {
-	reader *Reader
+	reader    *Reader
+	xboxName  string
+	nameScanned bool
 }
 
 // New creates a Halo CE GameReader for the given instance.
@@ -53,6 +55,17 @@ func (g *Game) DetectEvents(tick uint32, instance string, snap scraper.SnapshotP
 
 func (g *Game) NewTickState() *scraper.TickState {
 	return scraper.NewTickState()
+}
+
+// XboxName returns the local xbox console name, scanning memory on first call
+// and caching the result. The name doesn't change within a session.
+func (g *Game) XboxName() string {
+	if g.nameScanned {
+		return g.xboxName
+	}
+	g.xboxName = ReadXboxName(g.reader.inst.Mem)
+	g.nameScanned = true
+	return g.xboxName
 }
 
 func init() {

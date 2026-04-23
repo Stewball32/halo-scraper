@@ -247,3 +247,21 @@ Object type values:
 0x3 = weapon      0x8 = liffblock
 0x4 = projectile  0x9 = sound_scenery
 ```
+
+## Xbox console name
+
+The local xbox console name has no static GVA — it's heap-allocated by Halo's
+XString allocator. We locate it by pattern-scanning GVA 0x81000000–0x83000000
+for a 28-byte distinctive header that immediately precedes every heap copy:
+
+```
+C4 24 0A D0 80 B1 2F 00 08 00 00 00 6F E1 17 00
+78 14 20 00 6C 24 0A D0 DE 24 00 00
+```
+
+The name follows 4 bytes after the header (a flag u32 whose value varies) as
+UTF-16LE terminated by `00 00`. The header bytes are kernel pointers resolved
+at XBE load time, so they should be stable across xemu boots.
+
+See [internal/scraper/haloce/xboxname.go](../internal/scraper/haloce/xboxname.go).
+Surfaced on `/api/status` as `hosts.<name>.xbox_name`.

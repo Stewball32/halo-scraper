@@ -138,6 +138,7 @@ export interface HostStatus {
 	state: 'online' | 'connecting' | 'offline';
 	since: string;
 	error: string;
+	xbox_name?: string;
 }
 
 export interface StatusResponse {

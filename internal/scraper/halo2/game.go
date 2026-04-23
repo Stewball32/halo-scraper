@@ -129,6 +129,9 @@ func (g *Game) NewTickState() *scraper.TickState {
 	return scraper.NewTickState()
 }
 
+// XboxName returns "" — no known offset for the xbox console name in Halo 2 yet.
+func (g *Game) XboxName() string { return "" }
+
 func init() {
 	scraper.Register(TitleID, func(inst *xemu.Instance, instanceName string) scraper.GameReader {
 		return New(inst, instanceName)

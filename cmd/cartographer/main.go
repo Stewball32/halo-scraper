@@ -167,9 +167,10 @@ func resolveConfigPaths(cfgFile string, cfg *config) {
 
 // hostStatus tracks the connection state of one xemu instance.
 type hostStatus struct {
-	State string    // "connecting" | "online" | "offline"
-	Error string    // last error message; empty when online
-	Since time.Time // when State last changed
+	State    string    // "connecting" | "online" | "offline"
+	Error    string    // last error message; empty when online
+	Since    time.Time // when State last changed
+	XboxName string    // console name of the xbox running the game ("" if unknown)
 }
 
 // hostTracker manages per-host status and reconnect channels. It is safe for
@@ -218,6 +219,14 @@ func (t *hostTracker) setStatus(name, state, errMsg string) {
 		s.State = state
 		s.Error = errMsg
 		s.Since = time.Now()
+	}
+}
+
+func (t *hostTracker) setXboxName(name, xboxName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.statuses[name]; ok {
+		s.XboxName = xboxName
 	}
 }
 
@@ -290,17 +299,19 @@ func main() {
 			return
 		}
 		type hostJSON struct {
-			State string `json:"state"`
-			Since string `json:"since"`
-			Error string `json:"error"`
+			State    string `json:"state"`
+			Since    string `json:"since"`
+			Error    string `json:"error"`
+			XboxName string `json:"xbox_name"`
 		}
 		snap := tracker.snapshot()
 		hosts := make(map[string]hostJSON, len(snap))
 		for name, s := range snap {
 			hosts[name] = hostJSON{
-				State: s.State,
-				Since: s.Since.UTC().Format(time.RFC3339),
-				Error: s.Error,
+				State:    s.State,
+				Since:    s.Since.UTC().Format(time.RFC3339),
+				Error:    s.Error,
+				XboxName: s.XboxName,
 			}
 		}
 
@@ -513,6 +524,11 @@ func runHost(
 		log.Printf("%s: ready", host.Name)
 		hub.RegisterInstance(host.Name)
 		tracker.setStatus(host.Name, "online", "")
+
+		if xboxName := gameReader.XboxName(); xboxName != "" {
+			log.Printf("%s: xbox name resolved to %q", host.Name, xboxName)
+			tracker.setXboxName(host.Name, xboxName)
+		}
 
 		state := gameReader.NewTickState()
 		poll(ctx, gameReader, host.Name, hub, pbClient, state, settings)
