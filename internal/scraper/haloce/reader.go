@@ -115,7 +115,7 @@ func (r *Reader) ReadSnapshot() (scraper.SnapshotPayload, error) {
 	}
 
 	scoreLimit, _ := r.readScoreLimit(gametypeID)
-	teamScores, _ := r.readTeamScores(gametypeID, isTeamGame)
+	teamScores, _ := r.readTeamScores(isTeamGame)
 	players, _ := r.readSnapshotPlayers()
 	spawns, _ := r.readPowerItemSpawns()
 
@@ -131,12 +131,19 @@ func (r *Reader) ReadSnapshot() (scraper.SnapshotPayload, error) {
 	}, nil
 }
 
+// readGametypeID returns the current gametype ID. No authoritative direct
+// address has been verified on the Xbox build — AddrGameEngineGlobalsPtr
+// dereferences to a low GVA we can't translate, and AddrVariant holds a
+// per-gametype variant preset index, not the gametype itself. For now we
+// fall back to the variant byte; callers that need scoring should not rely
+// on this value (readTeamScores uses isTeamGame directly).
 func (r *Reader) readGametypeID() (uint32, error) {
-	gePtr, err := r.inst.DerefLowPtr(AddrGameEngineGlobalsPtr)
-	if err != nil || gePtr < 0x80000000 {
+	variantHVA, err := r.inst.LowHVA(AddrVariant)
+	if err != nil {
 		return 0, err
 	}
-	return r.inst.Mem.ReadU32(gePtr + OffGEGGametype)
+	v, err := r.inst.Mem.ReadU8At(variantHVA)
+	return uint32(v), err
 }
 
 func (r *Reader) readScoreLimit(gametypeID uint32) (int32, error) {
@@ -159,24 +166,17 @@ func (r *Reader) readScoreLimit(gametypeID uint32) (int32, error) {
 	return int32(v), err
 }
 
-func (r *Reader) readTeamScores(gametypeID uint32, isTeamGame bool) ([]scraper.TeamScore, error) {
+// readTeamScores returns the per-team scores for team games. Only the Slayer
+// base (AddrScoreSlayer, u32[2]=red,blue) is verified on the Xbox build; the
+// other game-type bases in offsets.go come from the Gearbox PC port docs and
+// haven't been confirmed in-memory yet. Since gametype detection is still
+// unresolved (see readGametypeID), we default to the Slayer base for any
+// team game — correct for Team Slayer, the most common team mode.
+func (r *Reader) readTeamScores(isTeamGame bool) ([]scraper.TeamScore, error) {
 	if !isTeamGame {
 		return nil, nil
 	}
-	var addrLow uint32
-	switch gametypeID {
-	case 1:
-		addrLow = AddrScoreCTF
-	case 2:
-		addrLow = AddrScoreSlayer
-	case 3:
-		addrLow = AddrScoreOddball
-	case 4:
-		addrLow = AddrScoreKing
-	default:
-		return nil, nil
-	}
-	hva, err := r.inst.LowHVA(addrLow)
+	hva, err := r.inst.LowHVA(AddrScoreSlayer)
 	if err != nil {
 		return nil, err
 	}
