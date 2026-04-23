@@ -586,12 +586,13 @@ func poll(
 	settings pollSettings,
 ) {
 	var (
-		prevTick          uint32
-		prevState         scraper.GameState
-		cachedSpawns      []scraper.PowerItemSpawn
-		spawnsLoaded      bool
-		lastTickBroadcast time.Time
-		errCount          int
+		prevTick           uint32
+		prevState          scraper.GameState
+		cachedSpawns       []scraper.PowerItemSpawn
+		spawnsLoaded       bool
+		lastTickBroadcast  time.Time
+		errCount           int
+		lastSentTeamScores []scraper.TeamScore
 	)
 
 	const maxErrs = 5
@@ -621,6 +622,7 @@ func poll(
 				prevState = gameState
 				spawnsLoaded = false
 				cachedSpawns = nil
+				lastSentTeamScores = nil
 			}
 			time.Sleep(settings.idle)
 			continue
@@ -648,6 +650,7 @@ func poll(
 
 				// Broadcast snapshot.
 				broadcastSnapshot(name, tick, snap, hub, pbClient)
+				lastSentTeamScores = snap.TeamScores
 
 				// Emit game_start event.
 				startEvt := scraper.MakeEnvelope("event", name, tick, map[string]any{
@@ -695,6 +698,13 @@ func poll(
 			events := reader.DetectEvents(tick, name, snap, tickResult, state)
 			for _, evt := range events {
 				broadcastEnvelope(evt, hub, pbClient)
+			}
+
+			// Re-broadcast the snapshot when team scores change so the
+			// dashboard's team-score header stays live during a match.
+			if !teamScoresEqual(lastSentTeamScores, snap.TeamScores) {
+				broadcastSnapshot(name, tick, snap, hub, pbClient)
+				lastSentTeamScores = snap.TeamScores
 			}
 		}
 
@@ -757,6 +767,25 @@ func handleStateTransition(
 	}
 
 	broadcastSnapshot(name, tick, snap, hub, pbClient)
+}
+
+// teamScoresEqual reports whether two team score slices have the same
+// (team → score) mapping. Order-insensitive.
+func teamScoresEqual(a, b []scraper.TeamScore) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	scores := make(map[uint32]int32, len(a))
+	for _, ts := range a {
+		scores[ts.Team] = ts.Score
+	}
+	for _, ts := range b {
+		prev, ok := scores[ts.Team]
+		if !ok || prev != ts.Score {
+			return false
+		}
+	}
+	return true
 }
 
 func broadcastSnapshot(name string, tick uint32, snap scraper.SnapshotPayload, hub *ws.Hub, pbClient *pb.Client) {
