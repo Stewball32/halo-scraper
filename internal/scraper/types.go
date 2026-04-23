@@ -70,6 +70,10 @@ type SnapshotPayload struct {
 }
 
 // SnapshotPlayer is the static/score portion of a player.
+//
+// IsLocal/LocalIndex report whether a player is local to this xemu instance
+// (vs remote via system-link) and, for locals, the splitscreen slot (0–3).
+// Pointer types so games without local detection serialise them as null.
 type SnapshotPlayer struct {
 	Index      int    `json:"index"`
 	Name       string `json:"name"`
@@ -84,6 +88,8 @@ type SnapshotPlayer struct {
 	Multikill  uint16 `json:"multikill"`
 	ShotsFired int32  `json:"shots_fired"`
 	ShotsHit   int16  `json:"shots_hit"`
+	IsLocal    *bool  `json:"is_local"`
+	LocalIndex *int   `json:"local_index"`
 }
 
 // TeamScore is one team's current score.

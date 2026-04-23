@@ -243,6 +243,14 @@ func (r *Reader) readSnapshotPlayer(index int, base uint32) (scraper.SnapshotPla
 	mkRaw, _ := mem.ReadU16(base + OffPlrMultikill)
 	sfRaw, _ := mem.ReadS32(base + OffPlrShotsFired)
 	shRaw, _ := mem.ReadS16(base + OffPlrShotsHit)
+	li, _ := mem.ReadS16(base + OffPlrLocalIndex)
+
+	isLocal := li >= 0
+	var localIdx *int
+	if isLocal {
+		v := int(li)
+		localIdx = &v
+	}
 
 	return scraper.SnapshotPlayer{
 		Index:      index,
@@ -258,6 +266,8 @@ func (r *Reader) readSnapshotPlayer(index int, base uint32) (scraper.SnapshotPla
 		Multikill:  mkRaw,
 		ShotsFired: sfRaw,
 		ShotsHit:   shRaw,
+		IsLocal:    &isLocal,
+		LocalIndex: localIdx,
 	}, true, nil
 }
 

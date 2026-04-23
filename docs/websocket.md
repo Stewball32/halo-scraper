@@ -72,7 +72,9 @@ Sent on connect and on every game-state transition (menu → pregame → in_game
       "kill_streak": 3,
       "multikill":   0,
       "shots_fired": 340,
-      "shots_hit":   180
+      "shots_hit":   180,
+      "is_local":    true,
+      "local_index": 0
     }
   ],
   "power_item_spawns": [
@@ -89,6 +91,8 @@ Sent on connect and on every game-state transition (menu → pregame → in_game
 **`game_state` values:** `"menu"` | `"pregame"` | `"in_game"` | `"postgame"`
 
 **`gametype` values:** `"ctf"` | `"slayer"` | `"oddball"` | `"king"` | `"race"` | `"terminator"` | `"none"`
+
+**`players[].is_local` / `local_index`:** `is_local` is `true` for players physically on this xemu instance and `false` for remote system-link players; `local_index` is the splitscreen slot (`0`–`3`) for locals, `null` for remote players. Both fields are `null` when the running game has no local-player detection (e.g. Halo 2 today).
 
 ---
 

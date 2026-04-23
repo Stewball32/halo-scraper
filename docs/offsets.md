@@ -58,7 +58,7 @@ Read from `*AddrPlayerDatumArrayPtr`.
 Base: `first_element_addr + player_index * element_size`
 
 ```
-+0x02  s16   local_player_index  (-1 if remote)
++0x02  s16   local_player_index  (-1 if remote; 0–3 = splitscreen slot; exposed as is_local / local_index in snapshot)
 +0x04  [24]  name                (UTF-16LE, 12 chars max)
 +0x20  u32   team                (0=red, 1=blue; 0–15 for FFA)
 +0x24  u32   action_target_ref

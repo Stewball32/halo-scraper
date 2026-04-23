@@ -36,6 +36,8 @@ export interface SnapshotPlayer {
 	multikill: number;
 	shots_fired: number;
 	shots_hit: number;
+	is_local?: boolean | null;
+	local_index?: number | null;
 }
 
 export interface TeamScore {
